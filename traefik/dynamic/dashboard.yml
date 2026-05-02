@@ -1,0 +1,30 @@
+# Dynamic routing rules for OneClick-Host services
+# ─────────────────────────────────────
+
+http:
+  routers:
+    # API routing
+    api-router:
+      rule: "Host(`localhost`) && PathPrefix(`/api`)"
+      service: api-service
+      entryPoints:
+        - web
+
+    # Frontend routing (catch-all for localhost)
+    frontend-router:
+      rule: "Host(`localhost`)"
+      service: frontend-service
+      entryPoints:
+        - web
+      priority: 1
+
+  services:
+    api-service:
+      loadBalancer:
+        servers:
+          - url: "http://api:5000"
+
+    frontend-service:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:3000"

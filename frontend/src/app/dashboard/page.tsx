@@ -1,0 +1,159 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+
+interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  serviceCount: number;
+  createdAt: string;
+}
+
+export default function DashboardPage() {
+  const { user } = useAuth();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api
+      .getProjects()
+      .then(setProjects)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="space-y-8">
+      {/* ── Welcome ────────────────────────── */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">
+          Welcome back, {user?.fullName?.split(" ")[0] || "there"} 👋
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          Here&apos;s an overview of your deployments
+        </p>
+      </div>
+
+      {/* ── Quick Stats ────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardDescription>Total Projects</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-bold">
+              {loading ? "—" : projects.length}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardDescription>Total Services</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-bold">
+              {loading
+                ? "—"
+                : projects.reduce((sum, p) => sum + p.serviceCount, 0)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardDescription>Status</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20">
+              All systems normal
+            </Badge>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Recent Projects ────────────────── */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold">Recent Projects</h2>
+          <Link href="/dashboard/projects">
+            <Button variant="outline" size="sm">
+              View All
+            </Button>
+          </Link>
+        </div>
+
+        {loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <Card key={i} className="border-border/50 animate-pulse">
+                <CardHeader>
+                  <div className="h-5 bg-muted rounded w-2/3" />
+                  <div className="h-4 bg-muted rounded w-1/2 mt-2" />
+                </CardHeader>
+              </Card>
+            ))}
+          </div>
+        ) : projects.length === 0 ? (
+          <Card className="border-border/50 border-dashed">
+            <CardContent className="flex flex-col items-center justify-center py-12 space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-violet-500/10 flex items-center justify-center text-3xl">
+                🚀
+              </div>
+              <div className="text-center">
+                <p className="font-medium">No projects yet</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Create your first project to start deploying
+                </p>
+              </div>
+              <Link href="/dashboard/projects">
+                <Button className="bg-gradient-to-r from-violet-600 to-indigo-600">
+                  Create Project
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {projects.slice(0, 6).map((project) => (
+              <Link
+                key={project.id}
+                href={`/dashboard/projects/${project.id}`}
+              >
+                <Card className="border-border/50 hover:border-violet-500/30 transition-colors cursor-pointer group">
+                  <CardHeader>
+                    <CardTitle className="text-lg group-hover:text-violet-400 transition-colors">
+                      {project.name}
+                    </CardTitle>
+                    <CardDescription>
+                      {project.description || "No description"}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center justify-between text-sm text-muted-foreground">
+                      <span>{project.serviceCount} service(s)</span>
+                      <span>
+                        {new Date(project.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

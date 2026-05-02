@@ -122,7 +122,6 @@ d:\oneClick\
 │   │   │   ├── Project.cs
 │   │   │   ├── Service.cs
 │   │   │   ├── Deployment.cs
-│   │   │   ├── BuildLog.cs
 │   │   │   └── EnvironmentVariable.cs
 │   │   ├── DTOs/
 │   │   │   ├── Auth/
@@ -249,7 +248,6 @@ erDiagram
     Projects ||--o{ Services : contains
     Services ||--o{ Deployments : has
     Services ||--o{ EnvironmentVariables : has
-    Deployments ||--o{ BuildLogs : generates
 
     Users {
         uuid Id PK
@@ -291,18 +289,11 @@ erDiagram
         string Status "queued|cloning|building|deploying|live|failed"
         string ImageTag
         string ErrorMessage
+        text BuildLogs
         int Version
         datetime StartedAt
         datetime CompletedAt
         datetime CreatedAt
-    }
-
-    BuildLogs {
-        uuid Id PK
-        uuid DeploymentId FK
-        string LogLevel "info|warn|error"
-        text Message
-        datetime Timestamp
     }
 
     EnvironmentVariables {
@@ -452,7 +443,7 @@ Solution file.
 #### [NEW] [Program.cs](file:///d:/oneClick/backend/OneClickHost.Api/Program.cs)
 Configures services: EF Core, JWT, CORS, Swagger, controllers.
 
-#### [NEW] Models: User.cs, Project.cs, Service.cs, Deployment.cs, BuildLog.cs, EnvironmentVariable.cs
+#### [NEW] Models: User.cs, Project.cs, Service.cs, Deployment.cs, EnvironmentVariable.cs
 Entity classes matching the schema above.
 
 #### [NEW] [AppDbContext.cs](file:///d:/oneClick/backend/OneClickHost.Api/Data/AppDbContext.cs)
