@@ -84,6 +84,12 @@ logs/
 worker/workspace/
 
 # =========================
+# Traefik
+# =========================
+traefik/dynamic/*.yml
+!traefik/dynamic/dashboard.yml
+
+# =========================
 # Misc
 # =========================
 *.bak
