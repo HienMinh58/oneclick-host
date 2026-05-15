@@ -30,6 +30,14 @@ public class ServicesController : ControllerBase
         {
             return NotFound(new { message = "Project not found." });
         }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     [HttpPost("api/projects/{projectId:guid}/services")]
@@ -59,6 +67,10 @@ public class ServicesController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound(new { message = "Service not found." });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
     }
 

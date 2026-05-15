@@ -1,12 +1,19 @@
 import logging
+import os
+import re
+import subprocess
+
 import docker
-from docker.errors import NotFound, BuildError, APIError
+import yaml
+from docker.errors import APIError, NotFound
 
 from config import (
+    BUILD_TIMEOUT,
     TRAEFIK_DOMAIN,
     TRAEFIK_NETWORK,
     CONTAINER_MEMORY_LIMIT,
     CONTAINER_CPU_LIMIT,
+    CONTAINER_PIDS_LIMIT,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,9 +29,15 @@ def get_client():
     return _client
 
 
+def slugify(value: str, max_length: int = 63) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-")
+    slug = re.sub(r"-+", "-", slug)
+    return (slug or "app")[:max_length].strip("-") or "app"
+
+
 def build_image(source_path: str, image_tag: str) -> tuple[bool, str]:
     """
-    Build a Docker image from the source path.
+    Build a Docker image from the source path with a hard timeout.
 
     Returns:
         (success: bool, logs: str)
@@ -32,43 +45,44 @@ def build_image(source_path: str, image_tag: str) -> tuple[bool, str]:
     log_lines = []
 
     try:
-        logger.info(f"Building Docker image: {image_tag} from {source_path}")
-
-        # Build the image and stream logs
-        image, build_logs = get_client().images.build(
-            path=source_path,
-            tag=image_tag,
-            rm=True,
-            forcerm=True,
+        logger.info(
+            f"Building Docker image: {image_tag} from {source_path} "
+            f"(timeout: {BUILD_TIMEOUT}s)"
         )
 
-        for chunk in build_logs:
-            if "stream" in chunk:
-                line = chunk["stream"].strip()
-                if line:
-                    log_lines.append(line)
-                    logger.debug(line)
-            elif "error" in chunk:
-                log_lines.append(f"ERROR: {chunk['error']}")
+        result = subprocess.run(
+            ["docker", "build", "--rm", "--force-rm", "-t", image_tag, source_path],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=BUILD_TIMEOUT,
+            check=False,
+        )
+
+        if result.stdout:
+            log_lines.extend(line for line in result.stdout.splitlines() if line)
+
+        if result.returncode != 0:
+            logs_text = "\n".join(log_lines)
+            logger.error(f"Build failed for {image_tag} with exit code {result.returncode}")
+            return False, logs_text
 
         logs_text = "\n".join(log_lines)
         logger.info(f"Successfully built image: {image_tag}")
         return True, logs_text
 
-    except BuildError as e:
-        for chunk in e.build_log:
-            if "stream" in chunk:
-                log_lines.append(chunk["stream"].strip())
-            elif "error" in chunk:
-                log_lines.append(f"ERROR: {chunk['error']}")
+    except subprocess.TimeoutExpired as e:
+        if e.stdout:
+            stdout = e.stdout.decode(errors="replace") if isinstance(e.stdout, bytes) else e.stdout
+            log_lines.extend(line for line in stdout.splitlines() if line)
+        message = f"Docker build timed out after {BUILD_TIMEOUT} seconds"
+        log_lines.append(f"ERROR: {message}")
+        logger.error(f"{message}: {image_tag}")
+        return False, "\n".join(log_lines)
 
-        logs_text = "\n".join(log_lines)
-        logger.error(f"Build failed for {image_tag}: {e}")
-        return False, logs_text
-
-    except APIError as e:
-        logger.error(f"Docker API error: {e}")
-        return False, f"Docker API error: {str(e)}"
+    except OSError as e:
+        logger.error(f"Docker build command failed: {e}")
+        return False, f"Docker build command failed: {str(e)}"
 
 
 def stop_previous_container(container_name: str):
@@ -79,7 +93,7 @@ def stop_previous_container(container_name: str):
         container.stop(timeout=10)
         container.remove(force=True)
     except NotFound:
-        pass  # No previous container
+        pass
     except APIError as e:
         logger.warning(f"Error stopping container {container_name}: {e}")
 
@@ -92,18 +106,21 @@ def run_container(
     env_vars: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """
-    Run a new container with Traefik labels for automatic routing.
+    Run a new user workload on apps-net and create Traefik file-provider routing.
+
+    User workloads receive no Docker socket, no host mounts, no privileged mode,
+    and no host-published ports. This reduces blast radius, but shared Docker
+    is not strong sandboxing.
 
     Returns:
         (container_id, live_url)
     """
-    # Stop any existing container with the same name
-    stop_previous_container(container_name)
+    safe_container_name = slugify(container_name)
+    stop_previous_container(safe_container_name)
 
-    # Build the subdomain: {service}-{project}.{domain}
-    subdomain = f"{service_name}-{project_name}".lower().replace(" ", "-")
+    subdomain = slugify(f"{service_name}-{project_name}")
     live_url = f"http://{subdomain}.{TRAEFIK_DOMAIN}"
-    router_name = container_name.replace("-", "")
+    router_name = safe_container_name.replace("-", "")
 
     labels = {
         "traefik.enable": "true",
@@ -111,67 +128,59 @@ def run_container(
         f"traefik.http.routers.{router_name}.entrypoints": "web",
     }
 
-    environment = env_vars or {}
-
-    logger.info(f"Running container: {container_name} → {live_url}")
+    logger.info(f"Running container: {safe_container_name} -> {live_url}")
 
     container = get_client().containers.run(
         image=image_tag,
-        name=container_name,
+        name=safe_container_name,
         detach=True,
         labels=labels,
-        environment=environment,
+        environment=dict(env_vars or {}),
         mem_limit=CONTAINER_MEMORY_LIMIT,
         nano_cpus=int(CONTAINER_CPU_LIMIT * 1e9),
+        pids_limit=CONTAINER_PIDS_LIMIT,
+        privileged=False,
+        security_opt=["no-new-privileges:true"],
         restart_policy={"Name": "unless-stopped"},
         network=TRAEFIK_NETWORK,
+        ports={},
+        volumes={},
     )
 
     logger.info(f"Container started: {container.short_id}")
-
-    # Reload container attrs to get assigned ports
     container.reload()
-    
-    # Try to find the exposed port
+
     port = 80
     exposed_ports = container.attrs.get("Config", {}).get("ExposedPorts", {})
     if exposed_ports:
         port_str = list(exposed_ports.keys())[0]
         port = int(port_str.split("/")[0])
 
-    # Generate Traefik File Provider config
-    # This bypasses the Docker Socket provider which fails on Docker Desktop Windows
-    try:
-        import os
-        import yaml
-        
-        dynamic_dir = "/etc/traefik/dynamic"
-        if os.path.exists(dynamic_dir):
-            config = {
-                "http": {
-                    "routers": {
-                        router_name: {
-                            "rule": f"Host(`{subdomain}.{TRAEFIK_DOMAIN}`)",
-                            "service": router_name,
-                            "entryPoints": ["web"]
-                        }
-                    },
-                    "services": {
-                        router_name: {
-                            "loadBalancer": {
-                                "servers": [
-                                    {"url": f"http://{container_name}:{port}"}
-                                ]
-                            }
+    dynamic_dir = "/etc/traefik/dynamic"
+    if os.path.exists(dynamic_dir):
+        config = {
+            "http": {
+                "routers": {
+                    router_name: {
+                        "rule": f"Host(`{subdomain}.{TRAEFIK_DOMAIN}`)",
+                        "service": router_name,
+                        "entryPoints": ["web"],
+                    }
+                },
+                "services": {
+                    router_name: {
+                        "loadBalancer": {
+                            "servers": [
+                                {"url": f"http://{safe_container_name}:{port}"}
+                            ]
                         }
                     }
-                }
+                },
             }
-            config_path = os.path.join(dynamic_dir, f"{router_name}.yml")
-            with open(config_path, "w") as f:
-                yaml.dump(config, f)
-            logger.info(f"Wrote Traefik routing config to {config_path} for port {port}")
-    except Exception as e:
-        logger.error(f"Failed to generate Traefik config: {e}")
+        }
+        config_path = os.path.join(dynamic_dir, f"{router_name}.yml")
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(config, f)
+        logger.info(f"Wrote Traefik routing config to {config_path} for port {port}")
 
     return container.short_id, live_url

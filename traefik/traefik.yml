@@ -1,21 +1,18 @@
-# Traefik Static Configuration
-# ─────────────────────────────────────
+# Traefik static configuration for production.
+# The dashboard is disabled by default and no dashboard port is published in
+# docker-compose.yml. Use docker-compose.dev.yml for opt-in local dashboard use.
 
 api:
-  dashboard: true
-  insecure: true    # Dashboard on :8080 without auth (dev only)
+  dashboard: false
+  insecure: false
 
 entryPoints:
   web:
     address: ":80"
+  websecure:
+    address: ":443"
 
 providers:
-  # NOTE: Docker provider disabled on Windows Docker Desktop due to socket
-  # access issues. Enable on Linux/production servers by uncommenting below:
-  # docker:
-  #   endpoint: "unix:///var/run/docker.sock"
-  #   exposedByDefault: false
-  #   network: oneclick_oneclick-net
   file:
     directory: "/etc/traefik/dynamic"
     watch: true

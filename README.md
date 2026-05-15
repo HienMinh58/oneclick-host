@@ -2,100 +2,93 @@
   <img src="assets/logo_v1.png" alt="OneClick-Host Logo" width="200"/>
 </p>
 
-# OneClick-Host 🚀
+# OneClick-Host
 
-<p align="center">
-  <strong>A Premium Self-Hosted Platform as a Service (PaaS)</strong><br />
-  <em>Deploy your GitHub repositories with a single click. Zero DevOps, Maximum Control.</em>
-</p>
-
----
-
-OneClick-Host is a sophisticated, self-hosted deployment platform engineered for researchers, students, and small project teams. It serves as your private cloud infrastructure—similar to Vercel or Heroku—but entirely under your control. Simply provide a GitHub repository, and the platform handles the rest: stack detection, automated containerization, and live deployment with dynamic routing.
+OneClick-Host is a self-hosted PaaS for deploying GitHub repositories through a dashboard. It clones a submitted repository, detects the stack, builds a Docker image, runs the deployed container, and exposes it through Traefik.
 
 ![Dashboard Preview](assets/dashboard_new.png)
 
-## ✨ Core Features
+## Architecture
 
-*   **⚡ Zero-Config Deployments:** Just paste your GitHub URL and watch the magic happen.
-*   **🔍 Intelligent Stack Detection:** Automatically recognizes React, Next.js, ASP.NET Core, and Spring Boot.
-*   **📦 Automated Dockerization:** Generates optimized `Dockerfile`s on the fly, adhering to production best practices.
-*   **🌐 Dynamic Routing:** Seamlessly maps apps to subdomains (e.g., `http://frontend-forum.localhost`) via Traefik.
-*   **📂 Monorepo Support:** Deploy specific subdirectories with ease—perfect for full-stack monorepos.
-*   **📊 Real-Time Logs:** Native streaming of Docker build logs directly in your dashboard.
-
-## 🏗️ Technical Architecture
-
-The platform leverages a robust microservices architecture orchestrated via Docker Compose:
-
-| Component | Technology Stack | Responsibility |
+| Component | Technology | Responsibility |
 |:---|:---|:---|
-| **🎨 Frontend** | Next.js 15, Tailwind, shadcn/ui | Modern, responsive dashboard for managing services and deployments. |
-| **⚙️ API** | ASP.NET Core (.NET 10) | High-performance REST API managing state and deployment queues. |
-| **🤖 Worker** | Python 3.12 | Orchestration daemon using Docker SDK for cloning, building, and running. |
-| **🗄️ Database** | PostgreSQL 16 | Reliable persistence for project configurations and build history. |
-| **🛣️ Proxy** | Traefik v3.4 | Edge router providing dynamic load balancing and subdomain management. |
+| Frontend | Next.js 15 | Dashboard for projects, services, and deployments |
+| API | ASP.NET Core | Auth, project state, service config, deployment queue |
+| Worker | Python 3.12 | Clone, detect, build, run, and route user workloads |
+| Database | PostgreSQL 16 | Persistent state |
+| Proxy | Traefik v3.4 | Public HTTP/HTTPS entrypoint and dynamic routing |
 
-### The Deployment Pipeline
+Production networking is split by trust boundary:
 
-1. **Submission:** User enters a GitHub URL in the Next.js Dashboard.
-2. **Queuing:** ASP.NET API validates the request and queues a `Pending` job in PostgreSQL.
-3. **Detection:** The Python Worker clones the repo and executes `stack_detector.py`.
-4. **Generation:** If no `Dockerfile` exists, `dockerfile_generator.py` injects a custom-tailored template.
-5. **Execution:** `build_runner.py` builds the image and deploys the container to the internal `oneclick-net`.
-6. **Routing:** A YAML routing configuration is generated for Traefik, enabling instant global access.
+- `oneclick-control-net`: API, worker, PostgreSQL, frontend, and Traefik.
+- `oneclick-apps-net`: Traefik and user-deployed application containers only.
 
-## 💻 Supported Ecosystems
+User workloads should not be able to directly resolve or connect to PostgreSQL, API, or worker containers. Traefik is the only public entrypoint in the production Compose file.
 
-OneClick-Host provides first-class support for the following stacks out of the box:
+## Local Development
 
-- **Frontend:** React (Vite/CRA), Next.js
-- **Backend:** ASP.NET Core (.NET 10), Java Spring Boot (Maven/Gradle)
+1. Copy environment defaults:
 
-> [!TIP]
-> Have a custom environment? Just include your own `Dockerfile` in the root of your repository, and OneClick-Host will prioritize it!
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Docker & Docker Compose
-- Git
-
-### Installation & Setup
-
-1. **Clone the Repo:**
    ```bash
-   git clone https://github.com/HienMinh58/oneclick-host.git
-   cd oneclick-host
+   cp .env.example .env
    ```
 
-2. **Launch Infrastructure:**
+2. Start with the dev override:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+   ```
+
+3. Local convenience ports:
+
+   - Dashboard: <http://localhost:3000>
+   - API: <http://localhost:5000>
+   - Traefik dashboard: <http://localhost:8081>
+   - Public routed entrypoint: <http://localhost>
+
+The Traefik dashboard is enabled only by `docker-compose.dev.yml`. It is disabled in the production configuration.
+
+## Production Deployment
+
+1. Set strong values in `.env`, especially `POSTGRES_PASSWORD` and `JWT_SECRET`.
+2. Configure wildcard DNS, for example `*.example.com`, to your server.
+3. Set `TRAEFIK_DOMAIN=example.com`.
+4. Start only the production Compose file:
+
    ```bash
    docker compose up -d --build
    ```
 
-3. **Access Your Dashboard:**
-   - **Dashboard:** [http://localhost:3000](http://localhost:3000)
-   - **API Docs:** [http://localhost:5000/swagger](http://localhost:5000/swagger)
-   - **Traefik Hub:** [http://localhost:8081](http://localhost:8081)
+Production Compose publishes only ports `80` and `443` from Traefik. PostgreSQL, API, frontend, worker, and the Traefik dashboard are not directly published.
 
-## 🌍 Production Deployment
+## Security Checklist for AWS EC2 Deployment
 
-Ready to go live?
-1. Deploy to an Ubuntu VPS or AWS EC2 instance.
-2. Configure a Wildcard DNS record (e.g., `*.yourdomain.com`) to your server IP.
-3. Set `TRAEFIK_DOMAIN=yourdomain.com` in your `.env`.
-4. Run `docker compose up -d`.
-5. Your apps are now live at `http://{service}-{project}.yourdomain.com`!
+- Expose only ports `80` and `443` publicly.
+- Do not expose PostgreSQL, worker, API direct ports, frontend direct ports, or the Traefik dashboard.
+- Use restrictive AWS Security Groups; avoid `0.0.0.0/0` except for public HTTP/HTTPS.
+- Require strong `POSTGRES_PASSWORD` and `JWT_SECRET` values.
+- Require IMDSv2 on EC2 instances.
+- Attach only minimal IAM role permissions required for host maintenance.
+- Keep the Docker host private and patched.
+- Treat the worker as trusted infrastructure. Its Docker socket access is powerful and can control the host Docker daemon.
+- Do not run this as an open public PaaS without stronger workload isolation, quotas, abuse monitoring, and ideally a separate build/runtime sandbox such as isolated VMs, Firecracker, gVisor, or a dedicated container build service.
 
-## 🛡️ CI/CD & Reliability
+## Guardrails
 
-Our internal pipeline ensures stability across all components:
-- **Frontend/Backend:** Automated builds and linting.
-- **Worker:** Strict Python syntax validation and Docker SDK integration tests.
-- **Docker:** Infrastructure validation for complex multi-container setups.
+- Repository URLs must be public `https://github.com/owner/repo` URLs.
+- Clones are shallow by default.
+- Build jobs enforce `WORKER_BUILD_TIMEOUT`.
+- Worker workspaces are cleaned up after deployment success or failure.
+- User workload containers are started without Docker socket mounts, host mounts, privileged mode, or host-published ports.
+- `MAX_ACTIVE_SERVICES_PER_USER` limits service creation per user.
+- `MAX_CONCURRENT_BUILDS` limits the number of deployment jobs a worker process runs at once.
+- `DEPLOYMENT_RATE_LIMIT_PER_MINUTE` is reserved for future API rate limiting middleware.
 
-## 📄 License
+## Supported Stacks
 
-This project is licensed under the MIT License.
+- React
+- Next.js
+- ASP.NET Core
+- Spring Boot with Maven or Gradle
 
+If a repository includes its own `Dockerfile`, OneClick-Host uses it.

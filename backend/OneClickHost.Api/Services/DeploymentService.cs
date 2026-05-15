@@ -16,6 +16,8 @@ public class DeploymentService
 
     public async Task<DeploymentResponse> TriggerDeploymentAsync(Guid serviceId, Guid userId)
     {
+        // TODO: enforce AntiAbuse:DeploymentRateLimitPerMinute with ASP.NET Core
+        // rate limiting middleware before allowing untrusted multi-user access.
         var service = await _db.Services
             .Include(s => s.Project)
             .Include(s => s.Deployments)

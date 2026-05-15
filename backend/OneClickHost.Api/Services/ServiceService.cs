@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using OneClickHost.Api.Data;
 using OneClickHost.Api.DTOs.Services;
 using OneClickHost.Api.Models;
@@ -8,10 +9,12 @@ namespace OneClickHost.Api.Services;
 public class ServiceService
 {
     private readonly AppDbContext _db;
+    private readonly IConfiguration _configuration;
 
-    public ServiceService(AppDbContext db)
+    public ServiceService(AppDbContext db, IConfiguration configuration)
     {
         _db = db;
+        _configuration = configuration;
     }
 
     public async Task<List<ServiceResponse>> GetServicesAsync(Guid projectId, Guid userId)
@@ -62,6 +65,10 @@ public class ServiceService
         var projectExists = await _db.Projects.AnyAsync(p => p.Id == projectId && p.UserId == userId);
         if (!projectExists) throw new KeyNotFoundException("Project not found.");
 
+        ValidateRepoUrl(request.RepoUrl);
+        ValidateRelativeSubfolder(request.Subfolder);
+        await EnforceServiceLimitAsync(userId);
+
         var service = new Service
         {
             ProjectId = projectId,
@@ -91,9 +98,17 @@ public class ServiceService
             ?? throw new KeyNotFoundException("Service not found.");
 
         if (request.Name is not null) service.Name = request.Name;
-        if (request.RepoUrl is not null) service.RepoUrl = request.RepoUrl;
+        if (request.RepoUrl is not null)
+        {
+            ValidateRepoUrl(request.RepoUrl);
+            service.RepoUrl = request.RepoUrl;
+        }
         if (request.Branch is not null) service.Branch = request.Branch;
-        if (request.Subfolder is not null) service.Subfolder = request.Subfolder;
+        if (request.Subfolder is not null)
+        {
+            ValidateRelativeSubfolder(request.Subfolder);
+            service.Subfolder = request.Subfolder;
+        }
         if (request.ServiceType is not null) service.ServiceType = request.ServiceType;
 
         service.UpdatedAt = DateTime.UtcNow;
@@ -157,5 +172,50 @@ public class ServiceService
             ev.IsSecret ? "••••••••" : ev.Value,
             ev.IsSecret
         )).ToList();
+    }
+
+    private async Task EnforceServiceLimitAsync(Guid userId)
+    {
+        var limit = _configuration.GetValue("AntiAbuse:MaxActiveServicesPerUser", 20);
+        var activeServices = await _db.Services
+            .CountAsync(s => s.Project.UserId == userId);
+        if (activeServices >= limit)
+        {
+            throw new InvalidOperationException($"Maximum active service limit reached ({limit}).");
+        }
+    }
+
+    private static void ValidateRepoUrl(string repoUrl)
+    {
+        if (!Uri.TryCreate(repoUrl, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps ||
+            !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrEmpty(uri.UserInfo) ||
+            !string.IsNullOrEmpty(uri.Query) ||
+            !string.IsNullOrEmpty(uri.Fragment))
+        {
+            throw new ArgumentException("Repository URL must be a public https://github.com/owner/repo URL.");
+        }
+
+        var path = uri.AbsolutePath.Trim('/');
+        if (path.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            path = path[..^4];
+        }
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2 || parts.Any(p => p == "." || p == ".." || p.StartsWith('.')))
+        {
+            throw new ArgumentException("Repository URL must be a public https://github.com/owner/repo URL.");
+        }
+    }
+
+    private static void ValidateRelativeSubfolder(string? subfolder)
+    {
+        if (string.IsNullOrWhiteSpace(subfolder)) return;
+        if (Path.IsPathRooted(subfolder) ||
+            subfolder.Split('/', '\\').Any(part => part is ".."))
+        {
+            throw new ArgumentException("Subfolder must be a relative path inside the repository.");
+        }
     }
 }
