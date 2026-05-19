@@ -219,8 +219,9 @@ Script nay lam cac viec:
 
 4. Checkout branch/ref duoc cau hinh trong `repository_ref`.
 5. Tao file `.env` tren EC2.
-6. Tao systemd service `oneclick-host`.
-7. Chay:
+6. Ghi lai `traefik/dynamic/dashboard.yml` theo domain EC2 dang dung.
+7. Tao systemd service `oneclick-host`.
+8. Chay:
 
    ```bash
    systemctl start oneclick-host.service
@@ -261,6 +262,14 @@ cd /opt/oneclick-host
 docker compose -f docker-compose.yml -f docker-compose.ec2.yml ps
 ```
 
+Neu gap loi `.env: permission denied`, sua quyen:
+
+```bash
+cd /opt/oneclick-host
+sudo chown -R ubuntu:ubuntu /opt/oneclick-host
+sudo chmod 0640 .env
+```
+
 Xem log API:
 
 ```bash
@@ -285,6 +294,22 @@ Xem service log:
 sudo journalctl -u oneclick-host -n 200 --no-pager
 ```
 
+Test routing noi bo qua Traefik:
+
+```bash
+cd /opt/oneclick-host
+DOMAIN=$(grep '^TRAEFIK_DOMAIN=' .env | cut -d= -f2)
+curl -i -H "Host: $DOMAIN" http://127.0.0.1/
+curl -i -H "Host: $DOMAIN" http://127.0.0.1/health
+```
+
+Cach doc ket qua:
+
+- `200` hoac HTML: Traefik va app dang route dung.
+- `404 page not found`: request da vao Traefik nhung khong co router nao match `Host`.
+- `502 Bad Gateway`: Traefik match router nhung khong ket noi duoc container dich.
+- `connection refused`: Traefik chua listen port `80` hoac container Traefik chua chay.
+
 ## 9. Vi Sao Can docker-compose.ec2.yml?
 
 File `docker-compose.yml` goc dang phuc vu local dev, nen no expose:
@@ -304,6 +329,7 @@ Vi vay [docker-compose.ec2.yml](../docker-compose.ec2.yml) override lai:
 - Chi giu Traefik port `80`.
 - Gan label Traefik theo `TRAEFIK_DOMAIN`.
 - Truyen `NEXT_PUBLIC_API_URL` vao luc build frontend.
+- Set `DOCKER_API_VERSION` cho Traefik de Docker provider noi chuyen dung voi Docker daemon moi.
 
 Ket qua:
 
@@ -312,6 +338,46 @@ Public internet -> Traefik :80 -> frontend/api/user containers
 ```
 
 Postgres chi nam trong Docker network noi bo.
+
+Ngoai Docker provider, bootstrap EC2 cung ghi de `traefik/dynamic/dashboard.yml` theo domain thuc te, vi du `47.131.207.154.sslip.io`. Day la fallback qua file provider de dashboard/API van route duoc neu Docker provider gap su co.
+
+Neu EC2 da duoc tao truoc khi bootstrap co fallback nay, ban co the tu regenerate route file:
+
+```bash
+cd /opt/oneclick-host
+DOMAIN=$(grep '^TRAEFIK_DOMAIN=' .env | cut -d= -f2)
+
+cat > traefik/dynamic/dashboard.yml <<EOF
+http:
+  routers:
+    api-router:
+      rule: "Host(\`$DOMAIN\`) && (PathPrefix(\`/api\`) || Path(\`/health\`))"
+      service: api-service
+      entryPoints:
+        - web
+      priority: 100
+
+    frontend-router:
+      rule: "Host(\`$DOMAIN\`)"
+      service: frontend-service
+      entryPoints:
+        - web
+      priority: 1
+
+  services:
+    api-service:
+      loadBalancer:
+        servers:
+          - url: "http://api:5000"
+
+    frontend-service:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:3000"
+EOF
+
+sudo docker compose -f docker-compose.yml -f docker-compose.ec2.yml up -d --force-recreate traefik
+```
 
 ## 10. Bao Mat Va Gioi Han
 
@@ -372,6 +438,50 @@ sudo journalctl -u oneclick-host -n 200 --no-pager
 docker logs oneclick-api
 docker logs oneclick-frontend
 docker logs oneclick-traefik
+```
+
+Kiem tra Traefik route bang Host header:
+
+```bash
+cd /opt/oneclick-host
+DOMAIN=$(grep '^TRAEFIK_DOMAIN=' .env | cut -d= -f2)
+curl -i -H "Host: $DOMAIN" http://127.0.0.1/
+curl -i -H "Host: $DOMAIN" http://127.0.0.1/health
+```
+
+Neu ket qua la `404 page not found`, kiem tra route file co dung domain khong:
+
+```bash
+cat traefik/dynamic/dashboard.yml
+grep TRAEFIK_DOMAIN .env
+```
+
+`dashboard.yml` phai dung domain trong `.env`, khong phai `localhost`.
+
+### Traefik bao Docker API qua cu
+
+Neu log Traefik co loi:
+
+```text
+client version 1.24 is too old. Minimum supported API version is 1.40
+```
+
+Kiem tra Traefik container co env override chua:
+
+```bash
+sudo docker inspect oneclick-traefik --format '{{range .Config.Env}}{{println .}}{{end}}' | grep DOCKER_API_VERSION
+```
+
+Ket qua nen co:
+
+```text
+DOCKER_API_VERSION=1.44
+```
+
+Neu thieu, update `docker-compose.ec2.yml`, roi recreate Traefik:
+
+```bash
+sudo docker compose -f docker-compose.yml -f docker-compose.ec2.yml up -d --force-recreate traefik
 ```
 
 ### Khong SSH duoc

@@ -76,6 +76,38 @@ ENVEOF
 chown ubuntu:ubuntu .env
 chmod 0640 .env
 
+log "Writing EC2 Traefik dashboard/API routes"
+mkdir -p traefik/dynamic
+cat > traefik/dynamic/dashboard.yml <<ROUTEEOF
+http:
+  routers:
+    api-router:
+      rule: "Host(\`$DOMAIN_NAME\`) && (PathPrefix(\`/api\`) || Path(\`/health\`))"
+      service: api-service
+      entryPoints:
+        - web
+      priority: 100
+
+    frontend-router:
+      rule: "Host(\`$DOMAIN_NAME\`)"
+      service: frontend-service
+      entryPoints:
+        - web
+      priority: 1
+
+  services:
+    api-service:
+      loadBalancer:
+        servers:
+          - url: "http://api:5000"
+
+    frontend-service:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:3000"
+ROUTEEOF
+chown ubuntu:ubuntu traefik/dynamic/dashboard.yml
+
 log "Installing OneClick-Host systemd service"
 cat > /etc/systemd/system/oneclick-host.service <<SERVICEEOF
 [Unit]

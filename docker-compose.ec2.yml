@@ -7,6 +7,10 @@ services:
     ports: !reset []
 
   traefik:
+    environment:
+      # Traefik's Docker provider can otherwise fall back to API 1.24 on some
+      # hosts, while modern Docker daemons require at least 1.40.
+      DOCKER_API_VERSION: "1.44"
     ports:
       - "80:80"
       - "8081:8080"
