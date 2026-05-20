@@ -1,44 +1,51 @@
 import os
 import shutil
 import logging
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse, unquote
 from git import Repo
 
 from config import WORKSPACE_DIR
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_REPO_HOSTS = {"github.com"}
 
+def normalize_github_url(repo_url: str, branch: str, subfolder: str | None) -> tuple[str, str, str | None]:
+    """
+    Convert GitHub browser URLs to cloneable repository URLs.
 
-def validate_repo_url(repo_url: str) -> str:
-    """Allow public GitHub HTTPS clone URLs without embedded credentials."""
-    parsed = urlparse(repo_url)
-    if parsed.scheme != "https":
-        raise ValueError("Repository URL must use https://")
-    if parsed.hostname not in ALLOWED_REPO_HOSTS:
-        raise ValueError("Only github.com repositories are supported")
-    if parsed.username or parsed.password:
-        raise ValueError("Repository URL must not include credentials")
-    if parsed.query or parsed.fragment:
-        raise ValueError("Repository URL must not include query strings or fragments")
-    path = parsed.path.removesuffix(".git").strip("/")
-    parts = path.split("/")
-    if len(parts) != 2 or not all(parts):
-        raise ValueError("Repository URL must be in the form https://github.com/owner/repo")
-    if ".." in parts or any(part.startswith(".") for part in parts):
-        raise ValueError("Repository owner and name must be explicit")
-    return repo_url
+    Users often paste URLs such as:
+    https://github.com/owner/repo/tree/main/backend
 
+    Git cannot clone that URL directly. This normalizes it to the repo root,
+    extracts the branch, and appends any path after the branch to subfolder.
+    """
+    parsed = urlparse(repo_url.strip())
+    if parsed.netloc.lower() not in {"github.com", "www.github.com"}:
+        return repo_url, branch, subfolder
 
-def validate_relative_subfolder(subfolder: str | None) -> str | None:
-    """Keep requested source paths inside the cloned repository."""
-    if not subfolder:
-        return None
-    normalized = os.path.normpath(subfolder).replace("\\", "/")
-    if normalized.startswith("../") or normalized == ".." or os.path.isabs(normalized):
-        raise ValueError("Subfolder must be a relative path inside the repository")
-    return normalized
+    parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) < 2:
+        return repo_url, branch, subfolder
+
+    owner, repo = parts[0], parts[1]
+    repo_root = urlunparse((parsed.scheme or "https", "github.com", f"/{owner}/{repo}", "", "", ""))
+
+    if len(parts) >= 4 and parts[2] in {"tree", "blob"}:
+        branch = parts[3] or branch
+        url_subfolder = "/".join(parts[4:]) or None
+        if url_subfolder:
+            subfolder = f"{url_subfolder}/{subfolder}" if subfolder else url_subfolder
+
+    if repo_url != repo_root:
+        logger.info(
+            "Normalized GitHub URL '%s' to repo '%s' (branch: %s, subfolder: %s)",
+            repo_url,
+            repo_root,
+            branch,
+            subfolder,
+        )
+
+    return repo_root, branch, subfolder
 
 
 def clone_repo(repo_url: str, branch: str, subfolder: str | None, deployment_id: str) -> str:
@@ -54,8 +61,6 @@ def clone_repo(repo_url: str, branch: str, subfolder: str | None, deployment_id:
     Returns:
         Path to the cloned source code (respecting subfolder if specified)
     """
-    repo_url = validate_repo_url(repo_url)
-    subfolder = validate_relative_subfolder(subfolder)
     workspace = os.path.join(WORKSPACE_DIR, str(deployment_id))
 
     # Clean up any previous workspace
@@ -65,6 +70,7 @@ def clone_repo(repo_url: str, branch: str, subfolder: str | None, deployment_id:
     os.makedirs(workspace, exist_ok=True)
 
     clone_path = os.path.join(workspace, "repo")
+    repo_url, branch, subfolder = normalize_github_url(repo_url, branch, subfolder)
 
     logger.info(f"Cloning {repo_url} (branch: {branch}) into {clone_path}")
 
@@ -77,10 +83,7 @@ def clone_repo(repo_url: str, branch: str, subfolder: str | None, deployment_id:
 
     # If subfolder is specified, return path to that subfolder
     if subfolder:
-        source_path = os.path.abspath(os.path.join(clone_path, subfolder))
-        clone_root = os.path.abspath(clone_path)
-        if os.path.commonpath([clone_root, source_path]) != clone_root:
-            raise ValueError("Subfolder must stay inside the repository")
+        source_path = os.path.join(clone_path, subfolder)
         if not os.path.exists(source_path):
             raise FileNotFoundError(
                 f"Subfolder '{subfolder}' not found in repository"

@@ -1,4 +1,12 @@
+# BUG #6 FIX: Set a fixed project name so the Docker network is always
+# named 'oneclick_oneclick-net' regardless of the folder name.
+# This must match TRAEFIK_NETWORK in .env
+name: oneclick
+
 services:
+  # ─────────────────────────────────────────────
+  # PostgreSQL Database
+  # ─────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     container_name: oneclick-db
@@ -6,7 +14,9 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-oneclickhost}
       POSTGRES_USER: ${POSTGRES_USER:-oneclick}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+    ports:
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -15,22 +25,28 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - control-net
+      - oneclick-net
 
+  # ─────────────────────────────────────────────
+  # Traefik Reverse Proxy
+  # ─────────────────────────────────────────────
   traefik:
     image: traefik:v3.4
     container_name: oneclick-traefik
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
+      - "8081:8080"   # Traefik dashboard
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic:/etc/traefik/dynamic:ro
     networks:
-      - control-net
-      - apps-net
+      - oneclick-net
 
+  # ─────────────────────────────────────────────
+  # ASP.NET Core API
+  # ─────────────────────────────────────────────
   api:
     build:
       context: ./backend
@@ -38,21 +54,32 @@ services:
     container_name: oneclick-api
     restart: unless-stopped
     environment:
-      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ASPNETCORE_URLS: http://+:5000
-      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=${POSTGRES_DB:-oneclickhost};Username=${POSTGRES_USER:-oneclick};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
-      Jwt__Secret: ${JWT_SECRET:?JWT_SECRET must be set}
+      ConnectionStrings__DefaultConnection: ${CONNECTION_STRING:-Host=db;Port=5432;Database=oneclickhost;Username=oneclick;Password=change_me_in_production}
+      Jwt__Secret: ${JWT_SECRET:-super-secret-jwt-key-change-in-production-min-32-chars!!}
       Jwt__Issuer: ${JWT_ISSUER:-oneclick-host}
       Jwt__Audience: ${JWT_AUDIENCE:-oneclick-host-client}
       Jwt__ExpiryHours: ${JWT_EXPIRY_HOURS:-24}
-      AntiAbuse__MaxActiveServicesPerUser: ${MAX_ACTIVE_SERVICES_PER_USER:-20}
-      AntiAbuse__DeploymentRateLimitPerMinute: ${DEPLOYMENT_RATE_LIMIT_PER_MINUTE:-10}
+      # ISSUE #10 FIX: ASP.NET Core maps Cors__AllowedOrigins → Cors:AllowedOrigins
+      # Set CORS_ORIGINS in .env to your production domain
+      Cors__AllowedOrigins: ${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "5000:5000"
     depends_on:
       db:
         condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.api.entrypoints=web"
+      - "traefik.http.services.api.loadbalancer.server.port=5000"
     networks:
-      - control-net
+      - oneclick-net
 
+  # ─────────────────────────────────────────────
+  # Python Worker
+  # ─────────────────────────────────────────────
   worker:
     build:
       context: ./worker
@@ -60,18 +87,13 @@ services:
     container_name: oneclick-worker
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-oneclick}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:-oneclickhost}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-oneclick}:${POSTGRES_PASSWORD:-change_me_in_production}@db:5432/${POSTGRES_DB:-oneclickhost}
       POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-5}
       BUILD_TIMEOUT: ${WORKER_BUILD_TIMEOUT:-900}
-      MAX_CONCURRENT_BUILDS: ${MAX_CONCURRENT_BUILDS:-1}
       WORKSPACE_DIR: ${WORKSPACE_DIR:-/tmp/oneclick-workspace}
       TRAEFIK_DOMAIN: ${TRAEFIK_DOMAIN:-localhost}
-      TRAEFIK_NETWORK: oneclick-apps-net
-      CONTAINER_MEMORY_LIMIT: ${CONTAINER_MEMORY_LIMIT:-256m}
-      CONTAINER_CPU_LIMIT: ${CONTAINER_CPU_LIMIT:-0.5}
-      CONTAINER_PIDS_LIMIT: ${CONTAINER_PIDS_LIMIT:-256}
+      TRAEFIK_NETWORK: ${TRAEFIK_NETWORK:-oneclick_oneclick-net}
     volumes:
-      # Trusted infrastructure only. Docker socket access is root-equivalent on the host.
       - /var/run/docker.sock:/var/run/docker.sock
       - worker_workspace:/tmp/oneclick-workspace
       - ./traefik/dynamic:/etc/traefik/dynamic
@@ -79,8 +101,11 @@ services:
       db:
         condition: service_healthy
     networks:
-      - control-net
+      - oneclick-net
 
+  # ─────────────────────────────────────────────
+  # Next.js Frontend Dashboard
+  # ─────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -88,18 +113,22 @@ services:
     container_name: oneclick-frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000/api}
+    ports:
+      - "3000:3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`localhost`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
     networks:
-      - control-net
+      - oneclick-net
 
 volumes:
   postgres_data:
   worker_workspace:
 
 networks:
-  control-net:
-    name: oneclick-control-net
-    driver: bridge
-  apps-net:
-    name: oneclick-apps-net
+  oneclick-net:
     driver: bridge

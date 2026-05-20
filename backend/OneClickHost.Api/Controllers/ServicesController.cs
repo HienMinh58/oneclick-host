@@ -34,10 +34,6 @@ public class ServicesController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
-        catch (InvalidOperationException ex)
-        {
-            return Conflict(new { message = ex.Message });
-        }
     }
 
     [HttpPost("api/projects/{projectId:guid}/services")]
@@ -67,10 +63,6 @@ public class ServicesController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound(new { message = "Service not found." });
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { message = ex.Message });
         }
     }
 
@@ -104,6 +96,25 @@ public class ServicesController : ControllerBase
         }
     }
 
+    [HttpPost("api/services/{id:guid}/stop")]
+    public async Task<IActionResult> StopService(Guid id)
+    {
+        try
+        {
+            var userId = GetUserId();
+            await _serviceService.StopServiceAsync(id, userId);
+            return Accepted();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Service not found." });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpGet("api/services/{serviceId:guid}/env")]
     public async Task<ActionResult<List<EnvVarResponse>>> GetEnvVars(Guid serviceId)
     {
@@ -131,6 +142,10 @@ public class ServicesController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound(new { message = "Service not found." });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
     }
 

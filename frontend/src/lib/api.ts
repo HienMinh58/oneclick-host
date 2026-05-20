@@ -88,6 +88,7 @@ class ApiClient {
         id: string;
         name: string;
         description: string | null;
+        status: string;
         serviceCount: number;
         createdAt: string;
         updatedAt: string;
@@ -107,6 +108,7 @@ class ApiClient {
       id: string;
       name: string;
       description: string | null;
+      status: string;
       services: {
         id: string;
         name: string;
@@ -141,10 +143,11 @@ class ApiClient {
     projectId: string,
     data: {
       name: string;
-      repoUrl: string;
+      repoUrl?: string;
       branch?: string;
       subfolder?: string;
       serviceType?: string;
+      networkAliases?: string;
     }
   ) {
     return this.request(`/projects/${projectId}/services`, {
@@ -187,6 +190,10 @@ class ApiClient {
 
   async deleteService(id: string) {
     return this.request(`/services/${id}`, { method: "DELETE" });
+  }
+
+  async stopService(id: string) {
+    return this.request(`/services/${id}/stop`, { method: "POST" });
   }
 
   // ── Deployments ──────────────────────────
@@ -235,7 +242,7 @@ class ApiClient {
 
   async updateEnvVars(
     serviceId: string,
-    envVars: { key: string; value: string; isSecret: boolean }[]
+    envVars: { id?: string; key: string; value: string; isSecret: boolean }[]
   ) {
     return this.request(`/services/${serviceId}/env`, {
       method: "PUT",
