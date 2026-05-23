@@ -14,7 +14,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-oneclickhost}
       POSTGRES_USER: ${POSTGRES_USER:-oneclick}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oneclick_dev_password}
     ports:
       - "5433:5432"
     volumes:
@@ -56,9 +56,9 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ASPNETCORE_URLS: http://+:5000
-      ConnectionStrings__DefaultConnection: ${CONNECTION_STRING:-Host=db;Port=5432;Database=oneclickhost;Username=oneclick;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}}
-      Jwt__Secret: ${JWT_SECRET:?JWT_SECRET is required}
-      SecretEncryption__Key: ${ONECLICK_SECRET_KEY:?ONECLICK_SECRET_KEY is required}
+      ConnectionStrings__DefaultConnection: ${CONNECTION_STRING:-Host=db;Port=5432;Database=oneclickhost;Username=oneclick;Password=${POSTGRES_PASSWORD:-oneclick_dev_password}}
+      Jwt__Secret: ${JWT_SECRET:-oneclick-dev-jwt-secret-minimum-32-chars}
+      SecretEncryption__Key: ${ONECLICK_SECRET_KEY:-oneclick-dev-secret-key-minimum-32-chars}
       Jwt__Issuer: ${JWT_ISSUER:-oneclick-host}
       Jwt__Audience: ${JWT_AUDIENCE:-oneclick-host-client}
       Jwt__ExpiryHours: ${JWT_EXPIRY_HOURS:-24}
@@ -92,13 +92,13 @@ services:
     container_name: oneclick-worker
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-oneclick}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-oneclickhost}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-oneclick}:${POSTGRES_PASSWORD:-oneclick_dev_password}@db:5432/${POSTGRES_DB:-oneclickhost}
       POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-5}
       BUILD_TIMEOUT: ${WORKER_BUILD_TIMEOUT:-900}
       WORKSPACE_DIR: ${WORKSPACE_DIR:-/tmp/oneclick-workspace}
       TRAEFIK_DOMAIN: ${TRAEFIK_DOMAIN:-localhost}
       TRAEFIK_NETWORK: ${TRAEFIK_NETWORK:-oneclick_oneclick-net}
-      ONECLICK_SECRET_KEY: ${ONECLICK_SECRET_KEY:?ONECLICK_SECRET_KEY is required}
+      ONECLICK_SECRET_KEY: ${ONECLICK_SECRET_KEY:-oneclick-dev-secret-key-minimum-32-chars}
       ONECLICK_ENABLE_POST_START_COMMANDS: ${ONECLICK_ENABLE_POST_START_COMMANDS:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
