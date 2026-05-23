@@ -9,20 +9,30 @@ Also polls for services marked "deleting" and cleans up their containers/routes.
 import time
 import logging
 import traceback
+import json
 
 from config import POLL_INTERVAL, TRAEFIK_DOMAIN
 from db import (
     get_connection,
     fetch_queued_deployment,
+    fetch_queued_project_deployment,
     fetch_deleting_services,
+    fetch_deleting_compose_projects,
     fetch_stopping_services,
+    fetch_stopping_projects,
     permanently_delete_service,
+    permanently_delete_project,
     delete_empty_deleting_projects,
     update_deployment_status,
+    update_project_deployment_status,
+    update_project_status,
     update_service_status,
     supersede_previous_deployments,
+    supersede_previous_project_deployments,
     get_env_vars,
     fetch_live_backend_url,
+    mark_live_deployments_stopped,
+    mark_live_project_deployments_stopped,
 )
 from modules.repo_cloner import clone_repo, cleanup_workspace
 from modules.stack_detector import detect_stack
@@ -36,6 +46,12 @@ from modules.build_runner import (
     cleanup_service_artifacts,
     write_public_build_env,
 )
+from modules.compose_runner import (
+    cleanup_compose_stack,
+    deploy_compose_stack,
+    find_compose_file,
+)
+from secret_utils import decrypt_secret
 
 # ── Logging Setup ─────────────────────────────────
 logging.basicConfig(
@@ -44,6 +60,109 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("worker")
+
+
+def _read_json_list(value):
+    if not value:
+        return []
+    return json.loads(value)
+
+
+def _decrypt_compose_env_vars(env_vars):
+    return [
+        {
+            **env,
+            "value": decrypt_secret(env.get("value")),
+        }
+        for env in env_vars
+    ]
+
+
+def _redact_text(value: str, secret_values) -> str:
+    redacted = value
+    for secret in secret_values or []:
+        if secret and isinstance(secret, str) and len(secret) >= 4:
+            redacted = redacted.replace(secret, "********")
+    return redacted
+
+
+def _compose_secret_values(env_vars: list[dict]) -> list[str]:
+    return [env.get("value") for env in env_vars if env.get("isSecret")]
+
+
+def _service_secret_values(env_vars: dict[str, str]) -> list[str]:
+    return [value for value in env_vars.values() if value]
+
+
+def process_project_deployment(conn, deployment: dict):
+    """Full Docker Compose deployment pipeline for a project-level deployment."""
+    deployment_id = str(deployment["Id"])
+    project_id = str(deployment["ProjectId"])
+    project_name = deployment["ProjectName"]
+    repo_url = deployment["RepoUrl"]
+    branch = deployment["Branch"]
+    subfolder = deployment["Subfolder"]
+    compose_project_name = deployment["ComposeProjectName"] or f"oc-{project_id.replace('-', '')[:8]}"
+    routes = _read_json_list(deployment.get("ComposeRoutesJson"))
+    env_vars = _decrypt_compose_env_vars(_read_json_list(deployment.get("ComposeEnvJson")))
+    secret_values = _compose_secret_values(env_vars)
+    post_start_commands = deployment.get("ComposePostStartCommands")
+    all_logs = []
+
+    try:
+        all_logs.append(f"=== Cloning {repo_url} (branch: {branch}) ===")
+        source_path = clone_repo(repo_url, branch, subfolder, deployment_id)
+        all_logs.append("✓ Repository cloned successfully")
+        update_project_deployment_status(conn, deployment_id, "building", build_logs=_redact_text("\n".join(all_logs), secret_values))
+
+        compose_file = find_compose_file(source_path, deployment.get("ComposeFile"))
+        all_logs.append(f"✓ Compose file found: {compose_file}")
+
+        update_project_deployment_status(conn, deployment_id, "deploying", build_logs=_redact_text("\n".join(all_logs), secret_values))
+        public_urls, compose_logs = deploy_compose_stack(
+            source_path=source_path,
+            compose_file=compose_file,
+            project_id=project_id,
+            deployment_id=deployment_id,
+            project_name=project_name,
+            compose_project_name=compose_project_name,
+            routes=routes,
+            env_vars=env_vars,
+            post_start_commands=post_start_commands,
+        )
+        all_logs.append(compose_logs)
+        all_logs.append("✓ Public URLs:")
+        all_logs.extend(public_urls)
+        public_urls_json = json.dumps(public_urls)
+
+        update_project_deployment_status(
+            conn,
+            deployment_id,
+            "live",
+            compose_project_name=compose_project_name,
+            public_urls_json=public_urls_json,
+            build_logs=_redact_text("\n".join(all_logs), secret_values),
+        )
+        update_project_status(conn, project_id, "live", compose_live_urls_json=public_urls_json)
+        supersede_previous_project_deployments(conn, project_id, deployment_id)
+        logger.info(f"✅ Compose deployment {deployment_id} succeeded → {', '.join(public_urls)}")
+
+    except Exception as e:
+        error_msg = str(e)
+        all_logs.append(f"\n❌ ERROR: {error_msg}")
+        all_logs.append(traceback.format_exc())
+        update_project_deployment_status(
+            conn,
+            deployment_id,
+            "failed",
+            error_message=_redact_text(error_msg, secret_values),
+            build_logs=_redact_text("\n".join(all_logs), secret_values),
+        )
+        update_project_status(conn, project_id, "failed")
+        logger.error(f"❌ Compose deployment {deployment_id} failed: {error_msg}")
+
+    finally:
+        cleanup_workspace(deployment_id)
 
 
 def process_deployment(conn, deployment: dict):
@@ -65,6 +184,7 @@ def process_deployment(conn, deployment: dict):
     container_name = f"oc-{project_name}-{service_name}".lower().replace(" ", "-")
 
     all_logs = []
+    env_vars = {}
 
     try:
         if service_type == "database":
@@ -75,6 +195,7 @@ def process_deployment(conn, deployment: dict):
             update_service_status(conn, service_id, "deploying", detected_stack="postgres")
 
             env_vars = get_env_vars(conn, service_id)
+            secret_values = _service_secret_values(env_vars)
             raw_aliases = deployment.get("NetworkAliases") or ""
             network_aliases = [a.strip() for a in raw_aliases.split(",") if a.strip()] or None
 
@@ -92,7 +213,7 @@ def process_deployment(conn, deployment: dict):
 
             update_deployment_status(conn, deployment_id, "live",
                                      image_tag="postgres:16-alpine",
-                                     build_logs="\n".join(all_logs))
+                                     build_logs=_redact_text("\n".join(all_logs), secret_values))
             update_service_status(conn, service_id, "live",
                                   live_url=live_url,
                                   container_id=container_id,
@@ -140,7 +261,7 @@ def process_deployment(conn, deployment: dict):
 
         # ── Step 2: Detect Stack ──────────────────
         update_deployment_status(conn, deployment_id, "building",
-                                 build_logs="\n".join(all_logs))
+                                 build_logs=_redact_text("\n".join(all_logs), _service_secret_values(env_vars)))
 
         all_logs.append("\n=== Detecting technology stack ===")
         stack = detect_stack(source_path)
@@ -158,7 +279,7 @@ def process_deployment(conn, deployment: dict):
         # ── Step 4: Build Image ───────────────────
         all_logs.append(f"\n=== Building Docker image: {image_tag} ===")
         update_deployment_status(conn, deployment_id, "building",
-                                 build_logs="\n".join(all_logs))
+                                 build_logs=_redact_text("\n".join(all_logs), _service_secret_values(env_vars)))
 
         env_vars = get_env_vars(conn, service_id)
         if service_type == "frontend" and not any(
@@ -192,7 +313,7 @@ def process_deployment(conn, deployment: dict):
         all_logs.append(f"\n=== Deploying container: {container_name} ===")
         update_deployment_status(conn, deployment_id, "deploying",
                                  image_tag=image_tag,
-                                 build_logs="\n".join(all_logs))
+                                 build_logs=_redact_text("\n".join(all_logs), _service_secret_values(env_vars)))
 
         # Parse NetworkAliases from comma-separated string (e.g. "smartinvoice-backend,backend")
         # into a list for Docker SDK. Strip whitespace and filter empty strings.
@@ -214,7 +335,7 @@ def process_deployment(conn, deployment: dict):
         # ── Success ───────────────────────────────
         update_deployment_status(conn, deployment_id, "live",
                                  image_tag=image_tag,
-                                 build_logs="\n".join(all_logs))
+                                 build_logs=_redact_text("\n".join(all_logs), _service_secret_values(env_vars)))
         update_service_status(conn, service_id, "live",
                               live_url=live_url,
                               container_id=container_id)
@@ -232,8 +353,8 @@ def process_deployment(conn, deployment: dict):
         all_logs.append(traceback.format_exc())
 
         update_deployment_status(conn, deployment_id, "failed",
-                                 error_message=error_msg,
-                                 build_logs="\n".join(all_logs))
+                                 error_message=_redact_text(error_msg, _service_secret_values(env_vars)),
+                                 build_logs=_redact_text("\n".join(all_logs), _service_secret_values(env_vars)))
         # BUG #2 is fixed in update_service_status — it clears LiveUrl/ContainerId on failure
         update_service_status(conn, service_id, "failed")
 
@@ -269,7 +390,7 @@ def process_deleting_services(conn):
         )
 
         try:
-            cleanup_container(container_name)
+            cleanup_service_artifacts(container_name, image_tags=list(service.get("ImageTags") or []), service_id=service_id)
             permanently_delete_service(conn, service_id)
             logger.info(f"✅ Service {service_id} cleaned up and removed from DB")
         except Exception as e:
@@ -279,6 +400,51 @@ def process_deleting_services(conn):
     deleted_projects = delete_empty_deleting_projects(conn)
     if deleted_projects:
         logger.info(f"✅ Removed {deleted_projects} fully-cleaned project(s) from DB")
+
+
+def process_stopping_projects(conn):
+    """Stop Compose project stacks without removing volumes."""
+    projects = fetch_stopping_projects(conn)
+    for project in projects:
+        project_id = str(project["Id"])
+        compose_project_name = project["ComposeProjectName"]
+        if not compose_project_name:
+            update_project_status(conn, project_id, "stopped", compose_live_urls_json="[]")
+            continue
+
+        logger.info(f"Stopping Compose project: {project['ProjectName']} ({compose_project_name})")
+        try:
+            cleanup_compose_stack(compose_project_name, remove_volumes=False)
+            update_project_status(conn, project_id, "stopped", compose_live_urls_json="[]")
+            mark_live_project_deployments_stopped(conn, project_id)
+            logger.info(f"Compose project {project_id} stopped")
+        except Exception as e:
+            update_project_status(conn, project_id, "failed")
+            logger.error(f"Failed to stop Compose project {project_id}: {e}")
+            logger.debug(traceback.format_exc())
+
+
+def process_deleting_compose_projects(conn):
+    """Cleanup Compose project stacks, then delete the project row."""
+    projects = fetch_deleting_compose_projects(conn)
+    for project in projects:
+        project_id = str(project["Id"])
+        compose_project_name = project["ComposeProjectName"]
+        remove_volumes = bool(project["ComposeDeleteVolumesOnDelete"])
+
+        logger.info(
+            f"Deleting Compose project: {project['ProjectName']} "
+            f"({compose_project_name}, remove_volumes={remove_volumes})"
+        )
+        try:
+            if compose_project_name:
+                cleanup_compose_stack(compose_project_name, remove_volumes=remove_volumes)
+            permanently_delete_project(conn, project_id)
+            logger.info(f"Compose project {project_id} cleaned up and removed from DB")
+        except Exception as e:
+            update_project_status(conn, project_id, "deleting_failed")
+            logger.error(f"Failed to delete Compose project {project_id}: {e}")
+            logger.debug(traceback.format_exc())
 
 
 def process_stopping_services(conn):
@@ -304,6 +470,7 @@ def process_stopping_services(conn):
         try:
             cleanup_service_artifacts(container_name, image_tags=image_tags, service_id=service_id)
             update_service_status(conn, service_id, "stopped")
+            mark_live_deployments_stopped(conn, service_id)
             logger.info(f"✅ Service {service_id} stopped")
         except Exception as e:
             logger.error(f"❌ Failed to stop service {service_id}: {e}")
@@ -319,6 +486,14 @@ def main():
         try:
             conn = get_connection()
 
+            project_deployment = fetch_queued_project_deployment(conn)
+            if project_deployment:
+                logger.info(
+                    f"Processing Compose deployment {project_deployment['Id']} "
+                    f"for {project_deployment['ProjectName']}"
+                )
+                process_project_deployment(conn, project_deployment)
+
             # Poll for new deployments to process
             deployment = fetch_queued_deployment(conn)
             if deployment:
@@ -330,10 +505,12 @@ def main():
             else:
                 logger.debug("No queued deployments. Sleeping...")
 
+            process_stopping_projects(conn)
             process_stopping_services(conn)
 
             # BUG #8 FIX: Also poll for services waiting to be deleted
             process_deleting_services(conn)
+            process_deleting_compose_projects(conn)
 
             conn.close()
 
