@@ -138,6 +138,24 @@ Full setup and troubleshooting guides:
 - [`infra/aws/dev/README.md`](infra/aws/dev/README.md)
 - [`docs/aws-terraform-infra-guide.md`](docs/aws-terraform-infra-guide.md)
 
+### Multi-Node Compose Deploy
+
+Phase-one multi-node Compose deploy uses HTTP app routes with `sslip.io`.
+Run API, PostgreSQL, frontend, and Traefik on the control-plane VM; run
+`WORKER_MODE=executor` on an execution-node VM in the same VPC/private network.
+Execution nodes register and lease jobs through `/api/execution-nodes/*`, then
+publish route targets such as `http://<execution-private-ip>:<published-port>`
+back to the control-plane Traefik registry.
+
+The public fixture repo target is:
+
+```text
+https://github.com/tuankiet18-dev/oneclick-compose-fixture
+```
+
+The same fixture contents are also kept locally under
+`fixtures/oneclick-compose-fixture` for review and manual push.
+
 ## 🛡️ CI/CD & Reliability
 
 Our internal pipeline ensures stability across all components:

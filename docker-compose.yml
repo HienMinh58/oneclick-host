@@ -69,6 +69,12 @@ services:
       AI__ApiKey: ${AI_API_KEY:-}
       AI__Model: ${AI_MODEL:-gpt-4o-mini}
       Cors__AllowedOrigins: ${CORS_ORIGINS:-http://localhost:3000}
+      ExecutionNodes__RegistrationToken: ${EXECUTION_NODE_REGISTRATION_TOKEN:-}
+      ExecutionNodes__LeaseTimeoutSeconds: ${EXECUTION_NODE_LEASE_TIMEOUT_SECONDS:-120}
+      ExecutionNodes__MaxLeaseRetries: ${EXECUTION_NODE_MAX_LEASE_RETRIES:-3}
+      ExecutionNodes__RetryDelaySeconds: ${EXECUTION_NODE_RETRY_DELAY_SECONDS:-30}
+      Traefik__DynamicDirectory: ${TRAEFIK_DYNAMIC_DIR:-/etc/traefik/dynamic}
+      OneClick__LogMaxBytes: ${LOG_MAX_BYTES:-200000}
     ports:
       - "5000:5000"
     depends_on:
@@ -94,10 +100,19 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-oneclick}:${POSTGRES_PASSWORD:-oneclick_dev_password}@db:5432/${POSTGRES_DB:-oneclickhost}
       POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-5}
+      WORKER_MODE: ${WORKER_MODE:-singlehost-dev}
       BUILD_TIMEOUT: ${WORKER_BUILD_TIMEOUT:-900}
+      MAX_CONCURRENT_BUILDS: ${MAX_CONCURRENT_BUILDS:-1}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-200000}
       WORKSPACE_DIR: ${WORKSPACE_DIR:-/tmp/oneclick-workspace}
       TRAEFIK_DOMAIN: ${TRAEFIK_DOMAIN:-localhost}
       TRAEFIK_NETWORK: ${TRAEFIK_NETWORK:-oneclick_oneclick-net}
+      CONTROL_PLANE_API_URL: ${CONTROL_PLANE_API_URL:-http://api:5000/api}
+      EXECUTION_NODE_ID: ${EXECUTION_NODE_ID:-}
+      EXECUTION_NODE_TOKEN: ${EXECUTION_NODE_TOKEN:-}
+      EXECUTION_NODE_PRIVATE_HOST: ${EXECUTION_NODE_PRIVATE_HOST:-}
+      EXECUTION_NODE_BIND_HOST: ${EXECUTION_NODE_BIND_HOST:-0.0.0.0}
+      EXECUTION_NODE_REGISTRATION_TOKEN: ${EXECUTION_NODE_REGISTRATION_TOKEN:-}
       ONECLICK_SECRET_KEY: ${ONECLICK_SECRET_KEY:-oneclick-dev-secret-key-minimum-32-chars}
       ONECLICK_ENABLE_POST_START_COMMANDS: ${ONECLICK_ENABLE_POST_START_COMMANDS:-false}
     volumes:
