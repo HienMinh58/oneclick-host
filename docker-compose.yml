@@ -16,7 +16,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-oneclick}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oneclick_dev_password}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -76,13 +76,13 @@ services:
       Traefik__DynamicDirectory: ${TRAEFIK_DYNAMIC_DIR:-/etc/traefik/dynamic}
       OneClick__LogMaxBytes: ${LOG_MAX_BYTES:-200000}
     ports:
-      - "5000:5000"
+      - "${API_BIND:-127.0.0.1}:5000:5000"
     depends_on:
       db:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.api.rule=Host(`localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.api.rule=(Host(`localhost`) || Host(`${TRAEFIK_DOMAIN:-localhost}`)) && PathPrefix(`/api`)"
       - "traefik.http.routers.api.entrypoints=web"
       - "traefik.http.services.api.loadbalancer.server.port=5000"
     networks:
@@ -139,10 +139,10 @@ services:
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:5000/api}
     ports:
-      - "3000:3000"
+      - "${FRONTEND_BIND:-127.0.0.1}:3000:3000"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=Host(`localhost`)"
+      - "traefik.http.routers.frontend.rule=Host(`localhost`) || Host(`${TRAEFIK_DOMAIN:-localhost}`)"
       - "traefik.http.routers.frontend.entrypoints=web"
       - "traefik.http.routers.frontend.priority=1"
       - "traefik.http.services.frontend.loadbalancer.server.port=3000"
