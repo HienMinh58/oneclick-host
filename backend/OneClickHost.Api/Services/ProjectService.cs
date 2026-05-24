@@ -47,6 +47,10 @@ public class ProjectService
         var project = await _db.Projects
             .Include(p => p.Services)
             .Include(p => p.ProjectDeployments.OrderByDescending(d => d.CreatedAt).Take(10))
+                .ThenInclude(d => d.LockedByNode)
+            .Include(p => p.ProjectDeployments.OrderByDescending(d => d.CreatedAt).Take(10))
+                .ThenInclude(d => d.RouteTargets)
+                    .ThenInclude(r => r.ExecutionNode)
             .FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == userId)
             ?? throw new KeyNotFoundException("Project not found.");
 
@@ -204,6 +208,9 @@ public class ProjectService
 
         var deployments = await _db.ProjectDeployments
             .Where(d => d.ProjectId == projectId)
+            .Include(d => d.LockedByNode)
+            .Include(d => d.RouteTargets)
+                .ThenInclude(r => r.ExecutionNode)
             .OrderByDescending(d => d.CreatedAt)
             .ToListAsync();
         return deployments.Select(ToProjectDeploymentResponse).ToList();
@@ -596,7 +603,17 @@ public class ProjectService
             deployment.Version,
             deployment.StartedAt,
             deployment.CompletedAt,
-            deployment.CreatedAt
+            deployment.CreatedAt,
+            deployment.LockedByNode?.Name,
+            deployment.FailureCategory,
+            deployment.RouteTargets.Select(route => new RouteTargetResponse(
+                route.Id,
+                route.Host,
+                route.TargetUrl,
+                route.Status,
+                route.ExecutionNode?.Name,
+                route.UpdatedAt
+            )).ToList()
         );
     }
 

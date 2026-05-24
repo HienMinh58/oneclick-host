@@ -15,6 +15,8 @@ public class AppDbContext : DbContext
     public DbSet<DeploymentDiagnosticSnapshot> DeploymentDiagnosticSnapshots => Set<DeploymentDiagnosticSnapshot>();
     public DbSet<DeploymentAiDiagnosis> DeploymentAiDiagnoses => Set<DeploymentAiDiagnosis>();
     public DbSet<EnvironmentVariable> EnvironmentVariables => Set<EnvironmentVariable>();
+    public DbSet<ExecutionNode> ExecutionNodes => Set<ExecutionNode>();
+    public DbSet<RouteTarget> RouteTargets => Set<RouteTarget>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -47,6 +49,11 @@ public class AppDbContext : DbContext
             e.Property(p => p.ComposeEnvJson).HasColumnType("text");
             e.Property(p => p.ComposePostStartCommands).HasColumnType("text");
             e.Property(p => p.ComposeLiveUrlsJson).HasColumnType("text");
+
+            e.HasMany(p => p.RouteTargets)
+             .WithOne(r => r.Project)
+             .HasForeignKey(r => r.ProjectId)
+             .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ── Service ───────────────────────────────
@@ -61,6 +68,11 @@ public class AppDbContext : DbContext
              .WithOne(ev => ev.Service)
              .HasForeignKey(ev => ev.ServiceId)
              .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasMany(s => s.RouteTargets)
+             .WithOne(r => r.Service)
+             .HasForeignKey(r => r.ServiceId)
+             .OnDelete(DeleteBehavior.SetNull);
         });
 
         // ── Deployment ────────────────────────────
@@ -77,6 +89,13 @@ public class AppDbContext : DbContext
              .WithOne(s => s.Deployment)
              .HasForeignKey<DeploymentAiDiagnosis>(s => s.DeploymentId)
              .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasOne(d => d.LockedByNode)
+             .WithMany(n => n.Deployments)
+             .HasForeignKey(d => d.LockedByNodeId)
+             .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasIndex(d => new { d.Status, d.NextRunAt, d.CreatedAt });
         });
 
         modelBuilder.Entity<DeploymentDiagnosticSnapshot>(e =>
@@ -98,6 +117,34 @@ public class AppDbContext : DbContext
         {
             e.Property(d => d.BuildLogs).HasColumnType("text");
             e.Property(d => d.PublicUrlsJson).HasColumnType("text");
+
+            e.HasOne(d => d.LockedByNode)
+             .WithMany(n => n.ProjectDeployments)
+             .HasForeignKey(d => d.LockedByNodeId)
+             .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasMany(d => d.RouteTargets)
+             .WithOne(r => r.ProjectDeployment)
+             .HasForeignKey(r => r.ProjectDeploymentId)
+             .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasIndex(d => new { d.Status, d.NextRunAt, d.CreatedAt });
+        });
+
+        modelBuilder.Entity<ExecutionNode>(e =>
+        {
+            e.HasIndex(n => n.Name).IsUnique();
+            e.Property(n => n.LabelsJson).HasColumnType("jsonb");
+        });
+
+        modelBuilder.Entity<RouteTarget>(e =>
+        {
+            e.HasIndex(r => r.Host);
+            e.HasIndex(r => new { r.ProjectId, r.Status });
+            e.HasOne(r => r.ExecutionNode)
+             .WithMany(n => n.RouteTargets)
+             .HasForeignKey(r => r.ExecutionNodeId)
+             .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

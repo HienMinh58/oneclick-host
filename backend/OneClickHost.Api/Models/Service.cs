@@ -50,4 +50,5 @@ public class Service
     public Project Project { get; set; } = null!;
     public ICollection<Deployment> Deployments { get; set; } = new List<Deployment>();
     public ICollection<EnvironmentVariable> EnvironmentVariables { get; set; } = new List<EnvironmentVariable>();
+    public ICollection<RouteTarget> RouteTargets { get; set; } = new List<RouteTarget>();
 }

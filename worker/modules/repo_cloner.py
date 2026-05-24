@@ -11,6 +11,27 @@ from config import WORKSPACE_DIR
 logger = logging.getLogger(__name__)
 
 
+def validate_repo_url(repo_url: str) -> str:
+    parsed = urlparse(repo_url.strip())
+    if parsed.scheme != "https" or parsed.netloc.lower() != "github.com":
+        raise ValueError("Only public GitHub HTTPS repository URLs are supported.")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("Repository URL must not include credentials, query parameters, or fragments.")
+
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) != 2:
+        raise ValueError("Repository URL must be a GitHub repository root.")
+    owner, repo = parts
+    repo_name = repo[:-4] if repo.endswith(".git") else repo
+    if not owner or not repo_name:
+        raise ValueError("Repository URL must include owner and repository name.")
+    return repo_url.strip()
+
+
+def validate_relative_subfolder(subfolder: str | None) -> str | None:
+    return _normalize_relative_path(subfolder)
+
+
 def _normalize_relative_path(path: str | None) -> str | None:
     if not path or not path.strip():
         return None
