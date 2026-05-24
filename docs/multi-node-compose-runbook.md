@@ -66,8 +66,15 @@ Nếu chạy trên Docker Desktop, có thể đặt:
 
 ```bash
 CONTROL_PLANE_PUBLIC_IP=127.0.0.1
+CONTROL_PLANE_API_BIND=127.0.0.1
+CONTROL_PLANE_API_HOST=host.docker.internal
 EXECUTION_NODE_PRIVATE_IP=host.docker.internal
 ```
+
+`CONTROL_PLANE_API_BIND` phải là IP thật để Docker bind port `5000`; không dùng
+hostname ở biến này. `CONTROL_PLANE_API_HOST` là hostname/IP mà execution-node
+container dùng để gọi control-plane API. Trên Docker Desktop Windows/macOS, giá
+trị này thường là `host.docker.internal`.
 
 Local có thể khác Linux VM thật ở phần private firewall, nhưng đủ để kiểm tra:
 registration, heartbeat, lease, build Compose, route target và cleanup.

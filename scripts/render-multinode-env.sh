@@ -16,6 +16,8 @@ Optional:
   OUTPUT_DIR=.generated/multinode
   SECRETS_FILE=.generated/multinode-secrets.env
   ADMIN_CORS_ORIGIN=http://1.2.3.4.sslip.io
+  CONTROL_PLANE_API_BIND=10.0.1.10
+  CONTROL_PLANE_API_HOST=10.0.1.10
 
 This renders:
   .generated/multinode/control-plane.env
@@ -41,6 +43,8 @@ set +a
 : "${EXECUTION_NODE_PRIVATE_IP:?EXECUTION_NODE_PRIVATE_IP is required}"
 
 control_plane_private_ip="${CONTROL_PLANE_PRIVATE_IP:-$CONTROL_PLANE_PUBLIC_IP}"
+control_plane_api_bind="${CONTROL_PLANE_API_BIND:-$control_plane_private_ip}"
+control_plane_api_host="${CONTROL_PLANE_API_HOST:-$control_plane_private_ip}"
 traefik_domain="${CONTROL_PLANE_PUBLIC_IP}.sslip.io"
 admin_cors_origin="${ADMIN_CORS_ORIGIN:-http://${traefik_domain}}"
 
@@ -61,7 +65,7 @@ JWT_EXPIRY_HOURS=24
 CORS_ORIGINS=${admin_cors_origin}
 TRAEFIK_DOMAIN=${traefik_domain}
 VITE_API_URL=http://${traefik_domain}/api
-API_BIND=${control_plane_private_ip}
+API_BIND=${control_plane_api_bind}
 POSTGRES_BIND=127.0.0.1
 FRONTEND_BIND=127.0.0.1
 EXECUTION_NODE_REGISTRATION_TOKEN=${EXECUTION_NODE_REGISTRATION_TOKEN}
@@ -75,7 +79,7 @@ EOF
 cat >"${output_dir}/execution-node.env" <<EOF
 # Generated execution-node env for OneClickHost multi-node phase one.
 WORKER_MODE=executor
-CONTROL_PLANE_API_URL=http://${control_plane_private_ip}:5000/api
+CONTROL_PLANE_API_URL=http://${control_plane_api_host}:5000/api
 EXECUTION_NODE_NAME=execution-node-1
 EXECUTION_NODE_TOKEN=${EXECUTION_NODE_TOKEN}
 EXECUTION_NODE_REGISTRATION_TOKEN=${EXECUTION_NODE_REGISTRATION_TOKEN}
@@ -105,4 +109,10 @@ HTTP app domain:
 
 Control-plane private/reference IP:
   ${control_plane_private_ip}
+
+Control-plane API bind/listen IP:
+  ${control_plane_api_bind}
+
+Execution-node API target host:
+  ${control_plane_api_host}
 EOF
