@@ -59,7 +59,7 @@ máy:
 
 ```bash
 docker compose --env-file .generated/multinode/control-plane.env up -d --build
-docker compose -f docker-compose.execution.yml --env-file .generated/multinode/execution-node.env up -d --build
+docker compose -p oneclick-execution -f docker-compose.execution.yml --env-file .generated/multinode/execution-node.env up -d --build
 ```
 
 Nếu chạy trên Docker Desktop, có thể đặt:
@@ -78,6 +78,16 @@ trị này thường là `host.docker.internal`.
 
 Local có thể khác Linux VM thật ở phần private firewall, nhưng đủ để kiểm tra:
 registration, heartbeat, lease, build Compose, route target và cleanup.
+
+Khi kiểm tra execution-node, luôn dùng cùng project name:
+
+```bash
+docker compose -p oneclick-execution -f docker-compose.execution.yml ps
+docker compose -p oneclick-execution -f docker-compose.execution.yml logs -f worker
+```
+
+Repo local có thể có `.env` với `COMPOSE_PROJECT_NAME=oneclick`; nếu bỏ `-p
+oneclick-execution`, Docker Compose sẽ nhìn nhầm sang control-plane project.
 
 ## 4. Control-Plane VM
 

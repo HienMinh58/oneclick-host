@@ -78,6 +78,7 @@ EOF
 
 cat >"${output_dir}/execution-node.env" <<EOF
 # Generated execution-node env for OneClickHost multi-node phase one.
+COMPOSE_PROJECT_NAME=oneclick-execution
 WORKER_MODE=executor
 CONTROL_PLANE_API_URL=http://${control_plane_api_host}:5000/api
 EXECUTION_NODE_NAME=execution-node-1
