@@ -75,6 +75,7 @@ services:
       ExecutionNodes__RetryDelaySeconds: ${EXECUTION_NODE_RETRY_DELAY_SECONDS:-30}
       Traefik__DynamicDirectory: ${TRAEFIK_DYNAMIC_DIR:-/etc/traefik/dynamic}
       OneClick__LogMaxBytes: ${LOG_MAX_BYTES:-200000}
+      OneClick__AutoMigrateDatabase: ${AUTO_MIGRATE_DATABASE:-false}
     ports:
       - "${API_BIND:-127.0.0.1}:5000:5000"
     depends_on:

@@ -84,7 +84,7 @@ builder.Services.AddSwaggerGen();
 var app = builder.Build();
 
 // ── Auto-migrate database ────────────────────────
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Configuration.GetValue("OneClick:AutoMigrateDatabase", false))
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
