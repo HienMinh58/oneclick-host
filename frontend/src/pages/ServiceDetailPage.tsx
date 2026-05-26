@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api, type ServiceDetail } from "@/lib/api";
+import { api, type ExposureProvider, type ServiceDetail } from "@/lib/api";
 import { toast } from "sonner";
 
 export function ServiceDetailPage() {
@@ -27,6 +28,7 @@ export function ServiceDetailPage() {
     branch: "",
     subfolder: "",
     serviceType: "",
+    exposureProvider: "traefik" as ExposureProvider,
     networkAliases: "",
   });
 
@@ -42,6 +44,7 @@ export function ServiceDetailPage() {
           branch: data.branch || "main",
           subfolder: data.subfolder || "",
           serviceType: data.serviceType || "frontend",
+          exposureProvider: data.exposureProvider || "traefik",
           networkAliases: data.networkAliases || "",
         });
       })
@@ -116,6 +119,10 @@ export function ServiceDetailPage() {
         branch: detailsForm.branch,
         subfolder: detailsForm.subfolder || undefined,
         serviceType: detailsForm.serviceType,
+        exposureProvider:
+          detailsForm.serviceType === "database" || detailsForm.serviceType === "redis"
+            ? undefined
+            : detailsForm.exposureProvider,
         networkAliases: detailsForm.networkAliases || undefined,
       });
       toast.success("Service details saved");
@@ -137,11 +144,17 @@ export function ServiceDetailPage() {
 
   if (!service) return <Card className="border-dashed"><CardContent className="py-14 text-center">Service not found.</CardContent></Card>;
 
+  const publicService = detailsForm.serviceType !== "database" && detailsForm.serviceType !== "redis";
+
   return (
     <div className="space-y-6">
       <PageHeader
         title={service.name}
-        description={`${service.serviceType} - ${service.detectedStack || "stack not detected"}`}
+        description={`${service.serviceType} - ${service.detectedStack || "stack not detected"}${
+          service.serviceType === "database" || service.serviceType === "redis"
+            ? ""
+            : ` - ${service.exposureProvider === "cloudflare_quick" ? "Cloudflare quick" : "Traefik"}`
+        }`}
         eyebrow={
           <Link to={`/projects/${projectId}`} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-3.5 w-3.5" /> Back to project
@@ -299,6 +312,23 @@ export function ServiceDetailPage() {
                       onChange={(event) => setDetailsForm((form) => ({ ...form, networkAliases: event.target.value }))}
                     />
                   </div>
+                  {publicService && (
+                    <div className="space-y-2">
+                      <Label htmlFor="service-exposure">Expose</Label>
+                      <Select
+                        value={detailsForm.exposureProvider}
+                        onValueChange={(value) => setDetailsForm((form) => ({ ...form, exposureProvider: value as ExposureProvider }))}
+                      >
+                        <SelectTrigger id="service-exposure">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="traefik">Traefik</SelectItem>
+                          <SelectItem value="cloudflare_quick">Cloudflare quick</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <Field label="Container" value={service.containerId || "-"} />
                 </div>
                 <Button type="submit" disabled={savingDetails}>

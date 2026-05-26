@@ -24,6 +24,10 @@ ONECLICK_LABEL = "com.oneclickhost.managed"
 ONECLICK_SERVICE_LABEL = "com.oneclickhost.service-id"
 ONECLICK_PROJECT_LABEL = "com.oneclickhost.project-name"
 ONECLICK_SERVICE_NAME_LABEL = "com.oneclickhost.service-name"
+ONECLICK_QUICK_TUNNEL_LABEL = "com.oneclickhost.cloudflare-quick-tunnel"
+TRAEFIK_EXPOSURE = "traefik"
+CLOUDFLARE_QUICK_EXPOSURE = "cloudflare_quick"
+CLOUDFLARE_QUICK_URL_RE = re.compile(r"https://[-a-z0-9]+\.trycloudflare\.com", re.IGNORECASE)
 
 
 def slugify(value: str) -> str:
@@ -164,6 +168,96 @@ def _remove_traefik_config(router_name: str):
             logger.debug(f"No Traefik config to remove at: {config_path}")
     except OSError as e:
         logger.warning(f"Could not remove Traefik config {config_path}: {e}")
+
+
+def _quick_tunnel_container_name(container_name: str) -> str:
+    return f"cf-{container_name}"[:63].rstrip("-")
+
+
+def _remove_cloudflare_quick_tunnel(container_name: str, service_id: str | None = None):
+    client = get_client()
+    names = {_quick_tunnel_container_name(container_name)}
+    if service_id:
+        for container in client.containers.list(
+            all=True,
+            filters={
+                "label": [
+                    f"{ONECLICK_SERVICE_LABEL}={service_id}",
+                    f"{ONECLICK_QUICK_TUNNEL_LABEL}=true",
+                ]
+            },
+        ):
+            names.add(container.name)
+
+    for name in names:
+        try:
+            container = client.containers.get(name)
+            if container.status == "running":
+                container.stop(timeout=10)
+            container.remove(force=True)
+            logger.info("Removed Cloudflare Quick Tunnel container: %s", name)
+        except NotFound:
+            continue
+        except APIError as e:
+            logger.warning("Could not remove Cloudflare Quick Tunnel container %s: %s", name, e)
+
+
+def _wait_for_quick_tunnel_url(container, container_name: str, timeout: int = 45) -> str:
+    deadline = time.time() + timeout
+    last_logs = ""
+    while time.time() < deadline:
+        container.reload()
+        if container.status not in {"created", "running"}:
+            break
+
+        raw_logs = container.logs(stdout=True, stderr=True, tail=120)
+        last_logs = raw_logs.decode("utf-8", errors="replace") if raw_logs else ""
+        match = CLOUDFLARE_QUICK_URL_RE.search(last_logs)
+        if match:
+            return match.group(0)
+        time.sleep(1)
+
+    raise RuntimeError(
+        "Cloudflare Quick Tunnel did not publish a trycloudflare.com URL "
+        f"for '{container_name}'. Recent cloudflared logs:\n{last_logs.strip()}"
+    )
+
+
+def _create_cloudflare_quick_tunnel(
+    container_name: str,
+    project_name: str,
+    service_name: str,
+    service_id: str | None,
+    port: int,
+) -> str:
+    client = get_client()
+    tunnel_name = _quick_tunnel_container_name(container_name)
+    _remove_cloudflare_quick_tunnel(container_name, service_id)
+
+    target_url = f"http://{container_name}:{port}"
+    labels = {
+        **_oneclick_labels(project_name, service_name, service_id),
+        ONECLICK_QUICK_TUNNEL_LABEL: "true",
+    }
+    logger.info("Starting Cloudflare Quick Tunnel %s -> %s", tunnel_name, target_url)
+    try:
+        client.images.get("cloudflare/cloudflared:latest")
+    except NotFound:
+        client.images.pull("cloudflare/cloudflared:latest")
+
+    tunnel = client.containers.create(
+        image="cloudflare/cloudflared:latest",
+        name=tunnel_name,
+        command=["tunnel", "--no-autoupdate", "--url", target_url],
+        detach=True,
+        labels=labels,
+        mem_limit=CONTAINER_MEMORY_LIMIT,
+        nano_cpus=int(CONTAINER_CPU_LIMIT * 1e9),
+        restart_policy={"Name": "unless-stopped"},
+    )
+    client.api.connect_container_to_network(tunnel.id, TRAEFIK_NETWORK)
+    tunnel.start()
+    return _wait_for_quick_tunnel_url(tunnel, tunnel_name)
 
 
 def _tail_container_logs(container, tail: int = 80) -> str:
@@ -312,12 +406,13 @@ def _assert_container_stable(container, container_name: str):
     raise RuntimeError("\n".join(details))
 
 
-def stop_previous_container(container_name: str):
+def stop_previous_container(container_name: str, service_id: str | None = None):
     """
     Stop and remove a previously running container if it exists.
     Also removes its Traefik routing config file to prevent stale routes.
     """
     router_name = container_name.replace("-", "")
+    _remove_cloudflare_quick_tunnel(container_name, service_id)
 
     try:
         container = get_client().containers.get(container_name)
@@ -344,6 +439,7 @@ def run_container(
     env_vars: dict[str, str] | None = None,
     network_aliases: list[str] | None = None,
     service_id: str | None = None,
+    exposure_provider: str = TRAEFIK_EXPOSURE,
 ) -> tuple[str, str]:
     """
     Run a new container with Traefik labels and optional Docker network aliases.
@@ -356,8 +452,8 @@ def run_container(
     Returns:
         (container_id, live_url)
     """
-    # Stop any existing container with the same name (and clean up its Traefik config)
-    stop_previous_container(container_name)
+    # Stop any existing container with the same name and clean up stale public routes.
+    stop_previous_container(container_name, service_id)
 
     # Build the subdomain: {service}-{project}.{domain}
     subdomain = f"{service_name}-{project_name}".lower().replace(" ", "-")
@@ -365,21 +461,26 @@ def run_container(
     router_name = container_name.replace("-", "")
     client = get_client()
     port = _infer_port_from_image(image_tag)
+    provider = (exposure_provider or TRAEFIK_EXPOSURE).strip().lower()
+    if provider not in {TRAEFIK_EXPOSURE, CLOUDFLARE_QUICK_EXPOSURE}:
+        raise RuntimeError(f"Unsupported exposure provider: {exposure_provider}")
 
     # NOTE: Docker labels only work when Docker provider is enabled in traefik.yml.
     # On Windows Docker Desktop (Docker provider disabled), these are ignored.
     # The File Provider fallback block below handles routing for Windows dev.
-    labels = {
-        **_oneclick_labels(project_name, service_name, service_id),
-        "traefik.enable": "true",
-        f"traefik.http.routers.{router_name}.rule": f"Host(`{subdomain}.{TRAEFIK_DOMAIN}`)",
-        f"traefik.http.routers.{router_name}.entrypoints": "web",
-        f"traefik.http.services.{router_name}.loadbalancer.server.port": str(port),
-    }
+    labels = _oneclick_labels(project_name, service_name, service_id)
+    if provider == TRAEFIK_EXPOSURE:
+        labels = {
+            **labels,
+            "traefik.enable": "true",
+            f"traefik.http.routers.{router_name}.rule": f"Host(`{subdomain}.{TRAEFIK_DOMAIN}`)",
+            f"traefik.http.routers.{router_name}.entrypoints": "web",
+            f"traefik.http.services.{router_name}.loadbalancer.server.port": str(port),
+        }
 
     environment = env_vars or {}
 
-    logger.info(f"Running container: {container_name} → {live_url}")
+    logger.info("Running container: %s via %s", container_name, provider)
     if network_aliases:
         logger.info(f"Network aliases: {network_aliases}")
 
@@ -414,6 +515,24 @@ def run_container(
 
     _assert_container_stable(container, container_name)
     _run_post_start_hooks(container, container_name, environment)
+
+    if provider == CLOUDFLARE_QUICK_EXPOSURE:
+        try:
+            live_url = _create_cloudflare_quick_tunnel(
+                container_name,
+                project_name,
+                service_name,
+                service_id,
+                port,
+            )
+        except Exception:
+            try:
+                container.remove(force=True, v=True)
+            except APIError as e:
+                logger.warning("Could not remove failed quick-tunnel app container %s: %s", container_name, e)
+            _remove_cloudflare_quick_tunnel(container_name, service_id)
+            raise
+        return container.short_id, live_url
 
     # Generate Traefik File Provider config.
     # Primary routing on Windows Docker Desktop (Docker socket provider off).
@@ -488,7 +607,7 @@ def run_postgres_container(
     Traefik public route. Application services connect through the alias on
     port 5432.
     """
-    stop_previous_container(container_name)
+    stop_previous_container(container_name, service_id)
 
     environment = {
         "POSTGRES_DB": "appdb",
@@ -549,7 +668,7 @@ def run_redis_container(
     service_id: str | None = None,
 ) -> tuple[str, str]:
     """Provision an internal-only Redis service."""
-    stop_previous_container(container_name)
+    stop_previous_container(container_name, service_id)
 
     client = get_client()
     image_tag = "redis:7-alpine"
@@ -591,14 +710,14 @@ def run_redis_container(
     return container.short_id, f"redis://{host}:6379/0"
 
 
-def cleanup_container(container_name: str):
+def cleanup_container(container_name: str, service_id: str | None = None):
     """
     BUG #8 SUPPORT: Full cleanup of a container and its Traefik config.
     Called by the Worker when it detects a service with Status='deleting'.
     This is a public-facing wrapper around stop_previous_container().
     """
     logger.info(f"Cleaning up container for deleted service: {container_name}")
-    stop_previous_container(container_name)
+    stop_previous_container(container_name, service_id)
 
 
 def _is_safe_oneclick_image(image, image_tag: str) -> bool:
@@ -622,7 +741,7 @@ def cleanup_service_artifacts(
     OneClickHost-built images, avoiding shared base images like postgres/redis.
     """
     client = get_client()
-    cleanup_container(container_name)
+    cleanup_container(container_name, service_id)
 
     volume_names = {f"{container_name}-data"}
     if service_id:

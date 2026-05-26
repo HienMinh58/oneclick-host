@@ -11,6 +11,9 @@ namespace OneClickHost.Api.Services;
 public class ProjectService
 {
     private const string SecretMask = "********";
+    private const string TraefikExposure = "traefik";
+    private const string CloudflareQuickExposure = "cloudflare_quick";
+    private static readonly HashSet<string> ComposeExposureProviders = [TraefikExposure, CloudflareQuickExposure];
     private static readonly string[] ComposeFileCandidates = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
     private static readonly HttpClient ComposeHttpClient = new()
     {
@@ -59,7 +62,7 @@ public class ProjectService
             ToComposeConfigResponse(project),
             project.ProjectDeployments.Select(ToProjectDeploymentResponse).ToList(),
             project.Services.Where(s => s.Status != "deleting").Select(s => new ProjectServiceSummary(
-                s.Id, s.Name, s.ServiceType, s.DetectedStack, s.Status, s.LiveUrl
+                s.Id, s.Name, s.ServiceType, s.ExposureProvider, s.DetectedStack, s.Status, s.LiveUrl
             )).ToList(),
             project.CreatedAt, project.UpdatedAt
         );
@@ -128,6 +131,7 @@ public class ProjectService
                 service.Name,
                 SuggestRouteSlug(service.Name),
                 SuggestRoutePort(service.Name, service.Ports),
+                TraefikExposure,
                 null,
                 null
             ))
@@ -278,7 +282,12 @@ public class ProjectService
                 throw new ArgumentException("Route slug is required.");
             if (route.InternalPort is < 1 or > 65535)
                 throw new ArgumentException($"Invalid internal port for route '{routeSlug}'.");
-            return new ComposeRouteResponse(serviceName, routeSlug, route.InternalPort, route.HealthPath, null);
+            var exposureProvider = string.IsNullOrWhiteSpace(route.ExposureProvider)
+                ? TraefikExposure
+                : route.ExposureProvider.Trim().ToLowerInvariant();
+            if (!ComposeExposureProviders.Contains(exposureProvider))
+                throw new ArgumentException($"Unsupported exposure provider for route '{routeSlug}': {route.ExposureProvider}");
+            return new ComposeRouteResponse(serviceName, routeSlug, route.InternalPort, exposureProvider, route.HealthPath, null);
         }).ToList();
 
         var duplicateRoute = normalized
@@ -573,7 +582,7 @@ public class ProjectService
 
         var liveUrls = ReadStringList(project.ComposeLiveUrlsJson);
         var routes = ReadRoutes(project.ComposeRoutesJson).Select(route =>
-            route with { LiveUrl = liveUrls.FirstOrDefault(url => url.Contains($"{route.RouteSlug}-", StringComparison.OrdinalIgnoreCase)) }
+            route with { LiveUrl = FindRouteLiveUrl(route, liveUrls) }
         ).ToList();
 
         return new ComposeConfigResponse(
@@ -617,10 +626,21 @@ public class ProjectService
         );
     }
 
-    private static List<ComposeRouteResponse> ReadRoutes(string? json) =>
-        string.IsNullOrWhiteSpace(json)
-            ? []
-            : JsonSerializer.Deserialize<List<ComposeRouteResponse>>(json, JsonOptions) ?? [];
+    private static List<ComposeRouteResponse> ReadRoutes(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        var routes = JsonSerializer.Deserialize<List<ComposeRouteResponse>>(json, JsonOptions) ?? [];
+        return routes
+            .Select(route => route with
+            {
+                ExposureProvider = string.IsNullOrWhiteSpace(route.ExposureProvider)
+                    ? TraefikExposure
+                    : route.ExposureProvider
+            })
+            .ToList();
+    }
 
     private static List<ComposeEnvVarResponse> ReadEnvVars(string? json) =>
         string.IsNullOrWhiteSpace(json)
@@ -631,6 +651,20 @@ public class ProjectService
         string.IsNullOrWhiteSpace(json)
             ? []
             : JsonSerializer.Deserialize<List<string>>(json, JsonOptions) ?? [];
+
+    private static string? FindRouteLiveUrl(ComposeRouteResponse route, List<string> liveUrls)
+    {
+        var directUrl = liveUrls.FirstOrDefault(url => url.Contains($"{route.RouteSlug}-", StringComparison.OrdinalIgnoreCase));
+        if (directUrl is not null)
+            return directUrl;
+        if (route.ExposureProvider == CloudflareQuickExposure)
+        {
+            var quickUrls = liveUrls.Where(url => url.Contains(".trycloudflare.com", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (quickUrls.Count == 1)
+                return quickUrls[0];
+        }
+        return null;
+    }
 
     private static string ToComposeProjectName(Guid projectId, string projectName)
     {

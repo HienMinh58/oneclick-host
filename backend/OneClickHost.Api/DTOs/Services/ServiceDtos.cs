@@ -8,6 +8,7 @@ public record CreateServiceRequest(
     [MaxLength(100)] string? Branch,
     [MaxLength(255)] string? Subfolder,
     [MaxLength(20)] string? ServiceType,   // frontend | backend | database | redis
+    [MaxLength(40)] string? ExposureProvider,
     /// <summary>Comma-separated Docker network aliases, e.g. "smartinvoice-backend,backend"</summary>
     [MaxLength(500)] string? NetworkAliases
 );
@@ -18,6 +19,7 @@ public record UpdateServiceRequest(
     [MaxLength(100)] string? Branch,
     [MaxLength(255)] string? Subfolder,
     [MaxLength(20)] string? ServiceType,
+    [MaxLength(40)] string? ExposureProvider,
     [MaxLength(500)] string? NetworkAliases
 );
 
@@ -29,6 +31,7 @@ public record ServiceResponse(
     string Branch,
     string? Subfolder,
     string ServiceType,
+    string ExposureProvider,
     string? DetectedStack,
     string? NetworkAliases,
     string Status,
@@ -45,6 +48,7 @@ public record ServiceDetailResponse(
     string Branch,
     string? Subfolder,
     string ServiceType,
+    string ExposureProvider,
     string? DetectedStack,
     string? NetworkAliases,
     string? ContainerId,

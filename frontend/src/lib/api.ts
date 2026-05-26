@@ -189,6 +189,7 @@ export type ServiceSummary = {
   id: string;
   name: string;
   serviceType: string;
+  exposureProvider: ExposureProvider;
   detectedStack: string | null;
   status: string;
   liveUrl: string | null;
@@ -206,6 +207,7 @@ export type CreateServiceRequest = {
   branch?: string;
   subfolder?: string;
   serviceType?: string;
+  exposureProvider?: ExposureProvider;
   networkAliases?: string;
 };
 
@@ -219,6 +221,7 @@ export type ServiceResponse = {
   branch: string;
   subfolder: string | null;
   serviceType: string;
+  exposureProvider: ExposureProvider;
   detectedStack: string | null;
   networkAliases: string | null;
   status: string;
@@ -235,6 +238,7 @@ export type ServiceDetail = {
   branch: string;
   subfolder: string | null;
   serviceType: string;
+  exposureProvider: ExposureProvider;
   detectedStack: string | null;
   networkAliases: string | null;
   containerId: string | null;
@@ -271,9 +275,12 @@ export type ComposeRoute = {
   serviceName: string;
   routeSlug: string;
   internalPort: number;
+  exposureProvider?: "traefik" | "cloudflare_quick";
   healthPath?: string | null;
   liveUrl?: string | null;
 };
+
+export type ExposureProvider = "traefik" | "cloudflare_quick";
 
 export type ComposeEnvVar = {
   serviceName: string;

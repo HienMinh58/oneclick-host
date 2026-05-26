@@ -35,6 +35,7 @@ public record ProjectServiceSummary(
     Guid Id,
     string Name,
     string ServiceType,
+    string ExposureProvider,
     string? DetectedStack,
     string Status,
     string? LiveUrl
@@ -77,6 +78,7 @@ public record ComposeRouteRequest(
     [Required, MaxLength(100)] string ServiceName,
     [Required, MaxLength(100)] string RouteSlug,
     int InternalPort,
+    [MaxLength(40)] string? ExposureProvider,
     [MaxLength(255)] string? HealthPath
 );
 
@@ -103,6 +105,7 @@ public record ComposeRouteResponse(
     string ServiceName,
     string RouteSlug,
     int InternalPort,
+    string ExposureProvider,
     string? HealthPath,
     string? LiveUrl
 );

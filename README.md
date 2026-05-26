@@ -49,6 +49,12 @@ The platform leverages a robust microservices architecture orchestrated via Dock
 
 When a deployment fails, the worker stores a diagnostic snapshot before cleanup. The snapshot includes the failed step, detected stack when available, a bounded log excerpt, a compact repository tree, and selected relevant files. The dashboard can then request a stored one-shot AI diagnosis without re-cloning the repository or re-running the deployment.
 
+### Cloudflare Quick Tunnel Preview URLs
+
+Compose routes and single service deployments can optionally use Cloudflare Quick Tunnel instead of Traefik. This starts a managed `cloudflare/cloudflared` sidecar for the selected HTTP service and publishes it through a temporary `https://*.trycloudflare.com` URL.
+
+Quick Tunnel mode does not require a Cloudflare account, token, or domain. It is intended for demos and previews: URLs are temporary and can change after redeploys or restarts. Database and Redis services remain internal-only. Use Traefik or a named Cloudflare Tunnel for stable production domains.
+
 ## 💻 Supported Ecosystems
 
 OneClick-Host provides first-class support for the following stacks out of the box:
@@ -166,4 +172,3 @@ Our internal pipeline ensures stability across all components:
 ## 📄 License
 
 This project is licensed under the MIT License.
-

@@ -28,7 +28,12 @@ DYNAMIC_DIR = "/etc/traefik/dynamic"
 ONECLICK_LABEL = "com.oneclickhost.managed"
 ONECLICK_PROJECT_ID_LABEL = "com.oneclickhost.project-id"
 ONECLICK_DEPLOYMENT_ID_LABEL = "com.oneclickhost.deployment-id"
+ONECLICK_COMPOSE_PROJECT_LABEL = "com.oneclickhost.compose-project"
+ONECLICK_QUICK_TUNNEL_LABEL = "com.oneclickhost.cloudflare-quick-tunnel"
 SECRET_MASK = "********"
+TRAEFIK_EXPOSURE = "traefik"
+CLOUDFLARE_QUICK_EXPOSURE = "cloudflare_quick"
+CLOUDFLARE_QUICK_URL_RE = re.compile(r"https://[-a-z0-9]+\.trycloudflare\.com", re.IGNORECASE)
 
 COMPOSE_CANDIDATES = ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml")
 BLOCKED_SERVICE_KEYS = {
@@ -342,6 +347,10 @@ def prepare_compose_file(
     missing_routes = route_services - set(services.keys())
     if missing_routes:
         raise RuntimeError(f"Public route references missing compose service(s): {', '.join(sorted(missing_routes))}")
+    for route in routes:
+        provider = route.get("exposureProvider", TRAEFIK_EXPOSURE)
+        if provider not in {TRAEFIK_EXPOSURE, CLOUDFLARE_QUICK_EXPOSURE}:
+            raise RuntimeError(f"Unsupported exposure provider for route '{route.get('routeSlug')}': {provider}")
 
     env_by_service: dict[str, dict[str, str]] = {}
     auto_env_vars: list[dict[str, Any]] = []
@@ -420,7 +429,7 @@ def prepare_compose_file(
             networks["oneclick-public"] = {"aliases": [alias]}
             service["networks"] = networks
             if expose_route_ports:
-                service["ports"] = [
+                published_ports = [
                     {
                         "target": int(route["internalPort"]),
                         "published": _find_free_port(),
@@ -429,7 +438,10 @@ def prepare_compose_file(
                     }
                     for route in routes
                     if route["serviceName"] == service_name
+                    and route.get("exposureProvider", TRAEFIK_EXPOSURE) == TRAEFIK_EXPOSURE
                 ]
+                if published_ports:
+                    service["ports"] = published_ports
 
     output_path = os.path.join(source_path, ".oneclick.compose.yml")
     with open(output_path, "w", encoding="utf-8") as f:
@@ -439,6 +451,11 @@ def prepare_compose_file(
 
 def _router_name(compose_project_name: str, route_slug: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]", "", f"compose-{compose_project_name}-{route_slug}")
+
+
+def _quick_tunnel_container_name(compose_project_name: str, route_slug: str) -> str:
+    value = f"cf-{compose_project_name}-{_slug(route_slug)}"
+    return value[:63].rstrip("-")
 
 
 def _config_path(compose_project_name: str, route_slug: str) -> str:
@@ -451,6 +468,8 @@ def write_traefik_routes(compose_project_name: str, project_name: str, routes: l
         return public_urls
 
     for route in routes:
+        if route.get("exposureProvider", TRAEFIK_EXPOSURE) != TRAEFIK_EXPOSURE:
+            continue
         route_slug = _slug(route["routeSlug"])
         service_name = route["serviceName"]
         port = int(route["internalPort"])
@@ -492,6 +511,83 @@ def write_traefik_routes(compose_project_name: str, project_name: str, routes: l
     return public_urls
 
 
+def _remove_quick_tunnel_container(container_name: str):
+    try:
+        container = _client().containers.get(container_name)
+        if container.status == "running":
+            container.stop(timeout=10)
+        container.remove(force=True)
+        logger.info("Removed Cloudflare Quick Tunnel container: %s", container_name)
+    except NotFound:
+        return
+    except APIError as e:
+        logger.warning("Could not remove Cloudflare Quick Tunnel container %s: %s", container_name, e)
+
+
+def _wait_for_quick_tunnel_url(container, container_name: str, timeout: int = 45) -> str:
+    deadline = time.time() + timeout
+    last_logs = ""
+    while time.time() < deadline:
+        container.reload()
+        if container.status not in {"created", "running"}:
+            break
+
+        raw_logs = container.logs(stdout=True, stderr=True, tail=120)
+        last_logs = raw_logs.decode("utf-8", errors="replace") if raw_logs else ""
+        match = CLOUDFLARE_QUICK_URL_RE.search(last_logs)
+        if match:
+            return match.group(0)
+        time.sleep(1)
+
+    raise RuntimeError(
+        "Cloudflare Quick Tunnel did not publish a trycloudflare.com URL "
+        f"for '{container_name}'. Recent cloudflared logs:\n{last_logs.strip()}"
+    )
+
+
+def create_cloudflare_quick_tunnels(compose_project_name: str, routes: list[dict[str, Any]]) -> list[str]:
+    public_urls = []
+    client = _client()
+
+    for route in routes:
+        if route.get("exposureProvider") != CLOUDFLARE_QUICK_EXPOSURE:
+            continue
+
+        route_slug = _slug(route["routeSlug"])
+        service_name = route["serviceName"]
+        port = int(route["internalPort"])
+        alias = f"{compose_project_name}-{_slug(service_name)}"
+        container_name = _quick_tunnel_container_name(compose_project_name, route_slug)
+        _remove_quick_tunnel_container(container_name)
+
+        target_url = f"http://{alias}:{port}"
+        labels = {
+            ONECLICK_LABEL: "true",
+            ONECLICK_COMPOSE_PROJECT_LABEL: compose_project_name,
+            ONECLICK_QUICK_TUNNEL_LABEL: "true",
+        }
+        logger.info("Starting Cloudflare Quick Tunnel %s -> %s", container_name, target_url)
+        try:
+            client.images.get("cloudflare/cloudflared:latest")
+        except NotFound:
+            client.images.pull("cloudflare/cloudflared:latest")
+        container = client.containers.create(
+            image="cloudflare/cloudflared:latest",
+            name=container_name,
+            command=["tunnel", "--no-autoupdate", "--url", target_url],
+            detach=True,
+            labels=labels,
+            mem_limit=CONTAINER_MEMORY_LIMIT,
+            nano_cpus=int(CONTAINER_CPU_LIMIT * 1e9),
+            restart_policy={"Name": "unless-stopped"},
+        )
+        client.api.connect_container_to_network(container.id, TRAEFIK_NETWORK)
+        container.start()
+        public_urls.append(_wait_for_quick_tunnel_url(container, container_name))
+
+    return public_urls
+
+
 def build_execution_node_route_targets(
     compose_project_name: str,
     project_name: str,
@@ -504,6 +600,8 @@ def build_execution_node_route_targets(
         raise RuntimeError("EXECUTION_NODE_PRIVATE_HOST is required for multi-node Compose routing.")
 
     for route in routes:
+        if route.get("exposureProvider", TRAEFIK_EXPOSURE) != TRAEFIK_EXPOSURE:
+            continue
         route_slug = _slug(route["routeSlug"])
         service_name = route["serviceName"]
         internal_port = int(route["internalPort"])
@@ -540,6 +638,21 @@ def remove_traefik_routes(compose_project_name: str):
                 os.remove(os.path.join(DYNAMIC_DIR, name))
             except OSError as e:
                 logger.warning("Could not remove Traefik route %s: %s", name, e)
+
+
+def remove_cloudflare_quick_tunnels(compose_project_name: str):
+    client = _client()
+    containers = client.containers.list(
+        all=True,
+        filters={
+            "label": [
+                f"{ONECLICK_COMPOSE_PROJECT_LABEL}={compose_project_name}",
+                f"{ONECLICK_QUICK_TUNNEL_LABEL}=true",
+            ]
+        },
+    )
+    for container in containers:
+        _remove_quick_tunnel_container(container.name)
 
 
 def _parse_ps(output: str) -> list[dict[str, Any]]:
@@ -637,6 +750,7 @@ def deploy_compose_stack(
     else:
         public_urls = write_traefik_routes(compose_project_name, project_name, routes)
         route_targets = []
+    public_urls.extend(create_cloudflare_quick_tunnels(compose_project_name, routes))
     if not public_urls:
         raise RuntimeError("No public routes were created.")
     return public_urls, "\n".join(logs), route_targets
@@ -645,6 +759,7 @@ def deploy_compose_stack(
 def cleanup_compose_stack(compose_project_name: str, remove_volumes: bool):
     client = _client()
     remove_traefik_routes(compose_project_name)
+    remove_cloudflare_quick_tunnels(compose_project_name)
     containers = client.containers.list(
         all=True,
         filters={"label": f"com.docker.compose.project={compose_project_name}"},

@@ -10,6 +10,9 @@ namespace OneClickHost.Api.Services;
 public class ServiceService
 {
     private const string SecretMask = "********";
+    private const string TraefikExposure = "traefik";
+    private const string CloudflareQuickExposure = "cloudflare_quick";
+    private static readonly HashSet<string> ExposureProviders = [TraefikExposure, CloudflareQuickExposure];
     private static readonly Regex EnvKeyRegex = new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
     private readonly AppDbContext _db;
     private readonly SecretEncryptionService _secrets;
@@ -31,7 +34,7 @@ public class ServiceService
             .OrderByDescending(s => s.UpdatedAt)
             .Select(s => new ServiceResponse(
                 s.Id, s.ProjectId, s.Name, s.RepoUrl, s.Branch,
-                s.Subfolder, s.ServiceType, s.DetectedStack,
+                s.Subfolder, s.ServiceType, s.ExposureProvider, s.DetectedStack,
                 s.NetworkAliases, s.Status, s.LiveUrl, s.CreatedAt, s.UpdatedAt))
             .ToListAsync();
     }
@@ -51,7 +54,7 @@ public class ServiceService
         return new ServiceDetailResponse(
             service.Id, service.ProjectId, service.Name,
             service.RepoUrl, service.Branch, service.Subfolder,
-            service.ServiceType, service.DetectedStack,
+            service.ServiceType, service.ExposureProvider, service.DetectedStack,
             service.NetworkAliases, service.ContainerId,
             service.Status, service.LiveUrl,
             service.EnvironmentVariables.Select(ToEnvVarResponse).ToList(),
@@ -77,6 +80,8 @@ public class ServiceService
         if (serviceType is not ("database" or "redis") && string.IsNullOrWhiteSpace(request.RepoUrl))
             throw new ArgumentException("GitHub repository URL is required for frontend and backend services.");
 
+        var exposureProvider = NormalizeExposureProvider(request.ExposureProvider, serviceType);
+
         var serviceName = request.Name.Trim();
         var subfolder = NormalizeRelativePath(request.Subfolder);
         var networkAliases = request.NetworkAliases;
@@ -91,6 +96,7 @@ public class ServiceService
             Branch = serviceType == "database" ? "postgres" : serviceType == "redis" ? "redis" : request.Branch ?? "main",
             Subfolder = serviceType is "database" or "redis" ? null : subfolder,
             ServiceType = serviceType,
+            ExposureProvider = exposureProvider,
             NetworkAliases = networkAliases
         };
 
@@ -124,7 +130,7 @@ public class ServiceService
         return new ServiceResponse(
             service.Id, service.ProjectId, service.Name,
             service.RepoUrl, service.Branch, service.Subfolder,
-            service.ServiceType, service.DetectedStack,
+            service.ServiceType, service.ExposureProvider, service.DetectedStack,
             service.NetworkAliases, service.Status, service.LiveUrl,
             service.CreatedAt, service.UpdatedAt);
     }
@@ -138,6 +144,12 @@ public class ServiceService
 
         if (request.ServiceType is not null && !IsValidServiceType(request.ServiceType))
             throw new ArgumentException($"Invalid service type: {request.ServiceType}");
+
+        var effectiveServiceType = request.ServiceType ?? service.ServiceType;
+        if (request.ExposureProvider is not null)
+            service.ExposureProvider = NormalizeExposureProvider(request.ExposureProvider, effectiveServiceType);
+        else if (effectiveServiceType is "database" or "redis")
+            service.ExposureProvider = TraefikExposure;
 
         if (request.Name is not null) service.Name = request.Name.Trim();
         if (request.RepoUrl is not null) service.RepoUrl = request.RepoUrl.Trim();
@@ -154,7 +166,7 @@ public class ServiceService
         return new ServiceResponse(
             service.Id, service.ProjectId, service.Name,
             service.RepoUrl, service.Branch, service.Subfolder,
-            service.ServiceType, service.DetectedStack,
+            service.ServiceType, service.ExposureProvider, service.DetectedStack,
             service.NetworkAliases, service.Status, service.LiveUrl,
             service.CreatedAt, service.UpdatedAt);
     }
@@ -308,6 +320,19 @@ public class ServiceService
     private static bool IsValidServiceType(string serviceType)
     {
         return serviceType is "frontend" or "backend" or "database" or "redis";
+    }
+
+    private static string NormalizeExposureProvider(string? exposureProvider, string serviceType)
+    {
+        if (serviceType is "database" or "redis")
+            return TraefikExposure;
+
+        var normalized = string.IsNullOrWhiteSpace(exposureProvider)
+            ? TraefikExposure
+            : exposureProvider.Trim().ToLowerInvariant();
+        if (!ExposureProviders.Contains(normalized))
+            throw new ArgumentException($"Invalid exposure provider: {exposureProvider}");
+        return normalized;
     }
 
     private static string ToDatabaseIdentifier(string value)

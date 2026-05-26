@@ -23,6 +23,7 @@ def fetch_queued_deployment(conn):
             SELECT d."Id", d."ServiceId", d."Version",
                    s."RepoUrl", s."Branch", s."Subfolder", s."Name" as "ServiceName",
                    s."ServiceType",
+                   s."ExposureProvider",
                    s."NetworkAliases",
                    p."Id" as "ProjectId",
                    p."Name" as "ProjectName"

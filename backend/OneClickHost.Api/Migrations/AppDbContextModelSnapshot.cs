@@ -486,6 +486,11 @@ namespace OneClickHost.Api.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
 
+                    b.Property<string>("ExposureProvider")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
                     b.Property<string>("LiveUrl")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");

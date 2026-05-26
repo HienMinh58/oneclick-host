@@ -16,8 +16,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api, type ProjectDetail } from "@/lib/api";
+import { api, type ExposureProvider, type ProjectDetail } from "@/lib/api";
 import { toast } from "sonner";
 
 export function ProjectDetailPage() {
@@ -33,6 +34,7 @@ export function ProjectDetailPage() {
   const [branch, setBranch] = useState("main");
   const [subfolder, setSubfolder] = useState("");
   const [serviceType, setServiceType] = useState("frontend");
+  const [exposureProvider, setExposureProvider] = useState<ExposureProvider>("traefik");
   const [networkAliases, setNetworkAliases] = useState("");
 
   const loadProject = useCallback(() => {
@@ -57,12 +59,14 @@ export function ProjectDetailPage() {
         branch: serviceType === "database" || serviceType === "redis" ? undefined : branch || undefined,
         subfolder: serviceType === "database" || serviceType === "redis" ? undefined : subfolder || undefined,
         serviceType,
+        exposureProvider: serviceType === "database" || serviceType === "redis" ? undefined : exposureProvider,
         networkAliases: networkAliases || undefined,
       });
       setServiceName("");
       setRepoUrl("");
       setBranch("main");
       setSubfolder("");
+      setExposureProvider("traefik");
       setNetworkAliases("");
       setDialogOpen(false);
       loadProject();
@@ -87,6 +91,8 @@ export function ProjectDetailPage() {
       setPendingAction(null);
     }
   };
+
+  const publicService = serviceType !== "database" && serviceType !== "redis";
 
   const deployService = async (serviceId: string) => {
     setPendingAction(`deploy-service-${serviceId}`);
@@ -192,6 +198,20 @@ export function ProjectDetailPage() {
                       </div>
                     </>
                   )}
+                  {publicService && (
+                    <div className="space-y-2">
+                      <Label htmlFor="service-exposure">Expose</Label>
+                      <Select value={exposureProvider} onValueChange={(value) => setExposureProvider(value as ExposureProvider)}>
+                        <SelectTrigger id="service-exposure">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="traefik">Traefik</SelectItem>
+                          <SelectItem value="cloudflare_quick">Cloudflare quick</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label htmlFor="network-aliases">Network aliases</Label>
                     <Input id="network-aliases" value={networkAliases} onChange={(event) => setNetworkAliases(event.target.value)} placeholder="api,backend" />
@@ -238,7 +258,12 @@ export function ProjectDetailPage() {
                         <Link to={`/projects/${projectId}/services/${service.id}`}>
                           <CardTitle className="text-base hover:text-primary">{service.name}</CardTitle>
                         </Link>
-                        <CardDescription>{service.serviceType} - {service.detectedStack || "not detected"}</CardDescription>
+                        <CardDescription>
+                          {service.serviceType} - {service.detectedStack || "not detected"}
+                          {service.serviceType === "database" || service.serviceType === "redis"
+                            ? ""
+                            : ` - ${service.exposureProvider === "cloudflare_quick" ? "Cloudflare quick" : "Traefik"}`}
+                        </CardDescription>
                       </div>
                       <StatusBadge status={service.status} />
                     </div>
