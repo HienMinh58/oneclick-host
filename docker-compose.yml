@@ -16,7 +16,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-oneclick}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oneclick_dev_password}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -69,14 +69,21 @@ services:
       AI__ApiKey: ${AI_API_KEY:-}
       AI__Model: ${AI_MODEL:-gpt-4o-mini}
       Cors__AllowedOrigins: ${CORS_ORIGINS:-http://localhost:3000}
+      ExecutionNodes__RegistrationToken: ${EXECUTION_NODE_REGISTRATION_TOKEN:-}
+      ExecutionNodes__LeaseTimeoutSeconds: ${EXECUTION_NODE_LEASE_TIMEOUT_SECONDS:-120}
+      ExecutionNodes__MaxLeaseRetries: ${EXECUTION_NODE_MAX_LEASE_RETRIES:-3}
+      ExecutionNodes__RetryDelaySeconds: ${EXECUTION_NODE_RETRY_DELAY_SECONDS:-30}
+      Traefik__DynamicDirectory: ${TRAEFIK_DYNAMIC_DIR:-/etc/traefik/dynamic}
+      OneClick__LogMaxBytes: ${LOG_MAX_BYTES:-200000}
+      OneClick__AutoMigrateDatabase: ${AUTO_MIGRATE_DATABASE:-false}
     ports:
-      - "5000:5000"
+      - "${API_BIND:-127.0.0.1}:5000:5000"
     depends_on:
       db:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.api.rule=Host(`localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.api.rule=(Host(`localhost`) || Host(`${TRAEFIK_DOMAIN:-localhost}`)) && PathPrefix(`/api`)"
       - "traefik.http.routers.api.entrypoints=web"
       - "traefik.http.services.api.loadbalancer.server.port=5000"
     networks:
@@ -94,10 +101,19 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-oneclick}:${POSTGRES_PASSWORD:-oneclick_dev_password}@db:5432/${POSTGRES_DB:-oneclickhost}
       POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-5}
+      WORKER_MODE: ${WORKER_MODE:-singlehost-dev}
       BUILD_TIMEOUT: ${WORKER_BUILD_TIMEOUT:-900}
+      MAX_CONCURRENT_BUILDS: ${MAX_CONCURRENT_BUILDS:-1}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-200000}
       WORKSPACE_DIR: ${WORKSPACE_DIR:-/tmp/oneclick-workspace}
       TRAEFIK_DOMAIN: ${TRAEFIK_DOMAIN:-localhost}
       TRAEFIK_NETWORK: ${TRAEFIK_NETWORK:-oneclick_oneclick-net}
+      CONTROL_PLANE_API_URL: ${CONTROL_PLANE_API_URL:-http://api:5000/api}
+      EXECUTION_NODE_ID: ${EXECUTION_NODE_ID:-}
+      EXECUTION_NODE_TOKEN: ${EXECUTION_NODE_TOKEN:-}
+      EXECUTION_NODE_PRIVATE_HOST: ${EXECUTION_NODE_PRIVATE_HOST:-}
+      EXECUTION_NODE_BIND_HOST: ${EXECUTION_NODE_BIND_HOST:-0.0.0.0}
+      EXECUTION_NODE_REGISTRATION_TOKEN: ${EXECUTION_NODE_REGISTRATION_TOKEN:-}
       ONECLICK_SECRET_KEY: ${ONECLICK_SECRET_KEY:-oneclick-dev-secret-key-minimum-32-chars}
       ONECLICK_ENABLE_POST_START_COMMANDS: ${ONECLICK_ENABLE_POST_START_COMMANDS:-false}
     volumes:
@@ -124,10 +140,10 @@ services:
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:5000/api}
     ports:
-      - "3000:3000"
+      - "${FRONTEND_BIND:-127.0.0.1}:3000:3000"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=Host(`localhost`)"
+      - "traefik.http.routers.frontend.rule=Host(`localhost`) || Host(`${TRAEFIK_DOMAIN:-localhost}`)"
       - "traefik.http.routers.frontend.entrypoints=web"
       - "traefik.http.routers.frontend.priority=1"
       - "traefik.http.services.frontend.loadbalancer.server.port=3000"

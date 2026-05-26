@@ -52,4 +52,5 @@ public class Project
     public User User { get; set; } = null!;
     public ICollection<Service> Services { get; set; } = new List<Service>();
     public ICollection<ProjectDeployment> ProjectDeployments { get; set; } = new List<ProjectDeployment>();
+    public ICollection<RouteTarget> RouteTargets { get; set; } = new List<RouteTarget>();
 }

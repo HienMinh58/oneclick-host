@@ -124,11 +124,23 @@ public record ProjectDeploymentResponse(
     int Version,
     DateTime? StartedAt,
     DateTime? CompletedAt,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    string? ExecutionNodeName,
+    string? FailureCategory,
+    List<RouteTargetResponse> RouteTargets
 );
 
 public record ProjectDeploymentLogsResponse(
     Guid DeploymentId,
     string Status,
     string? BuildLogs
+);
+
+public record RouteTargetResponse(
+    Guid Id,
+    string Host,
+    string TargetUrl,
+    string Status,
+    string? ExecutionNodeName,
+    DateTime UpdatedAt
 );

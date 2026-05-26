@@ -35,3 +35,20 @@ The worker is trusted infrastructure. It polls queued deployments, clones reposi
 pip install -r requirements.txt
 python main.py
 ```
+
+## Production Execution Node Mode
+
+For public or otherwise untrusted repositories, run the worker on an execution
+node instead of the control-plane host:
+
+```bash
+WORKER_MODE=executor python main.py
+```
+
+Required executor settings are `CONTROL_PLANE_API_URL`,
+`EXECUTION_NODE_TOKEN`, and `EXECUTION_NODE_PRIVATE_HOST`. On first boot, either
+set `EXECUTION_NODE_ID` to an existing node id or set
+`EXECUTION_NODE_REGISTRATION_TOKEN` so the worker can register itself. In this
+mode the worker leases jobs through `/api/execution-nodes/*`, runs Compose
+locally, publishes only route-selected services, and reports route targets back
+to the control-plane.

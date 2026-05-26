@@ -9,7 +9,9 @@ public record DeploymentResponse(
     int Version,
     DateTime? StartedAt,
     DateTime? CompletedAt,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    string? ExecutionNodeName,
+    string? FailureCategory
 );
 
 public record DeploymentLogsResponse(

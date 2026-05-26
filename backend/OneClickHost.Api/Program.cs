@@ -52,6 +52,7 @@ builder.Services.AddScoped<SecretBackfillService>();
 builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<ServiceService>();
 builder.Services.AddScoped<DeploymentService>();
+builder.Services.AddScoped<ExecutionNodeService>();
 builder.Services.AddHttpClient<IAiDeploymentDiagnosisService, AiDeploymentDiagnosisService>();
 
 // ── Controllers ──────────────────────────────────
@@ -83,7 +84,7 @@ builder.Services.AddSwaggerGen();
 var app = builder.Build();
 
 // ── Auto-migrate database ────────────────────────
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Configuration.GetValue("OneClick:AutoMigrateDatabase", false))
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();

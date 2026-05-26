@@ -118,3 +118,4 @@ traefik/dynamic/*.yml
 coverage/
 scratch/
 scripts/artifacts/
+.generated/

@@ -23,9 +23,20 @@ public class ProjectDeployment
 
     public int Version { get; set; } = 1;
 
+    public Guid? LockedByNodeId { get; set; }
+    public DateTime? LockedAt { get; set; }
+    public DateTime? HeartbeatAt { get; set; }
+    public int RetryCount { get; set; }
+    public DateTime? NextRunAt { get; set; }
+
+    [MaxLength(50)]
+    public string? FailureCategory { get; set; }
+
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public Project Project { get; set; } = null!;
+    public ExecutionNode? LockedByNode { get; set; }
+    public ICollection<RouteTarget> RouteTargets { get; set; } = new List<RouteTarget>();
 }

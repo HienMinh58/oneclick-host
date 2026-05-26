@@ -51,7 +51,8 @@ public class DeploymentService
             deployment.Id, deployment.ServiceId, deployment.Status,
             deployment.ImageTag, deployment.ErrorMessage,
             deployment.Version, deployment.StartedAt,
-            deployment.CompletedAt, deployment.CreatedAt);
+            deployment.CompletedAt, deployment.CreatedAt,
+            null, deployment.FailureCategory);
     }
 
     public async Task<List<DeploymentResponse>> GetDeploymentsAsync(Guid serviceId, Guid userId)
@@ -63,17 +64,21 @@ public class DeploymentService
         return await _db.Deployments
             .Where(d => d.ServiceId == serviceId)
             .OrderByDescending(d => d.CreatedAt)
+            .Include(d => d.LockedByNode)
             .Select(d => new DeploymentResponse(
                 d.Id, d.ServiceId, d.Status,
                 d.ImageTag, d.ErrorMessage,
                 d.Version, d.StartedAt,
-                d.CompletedAt, d.CreatedAt))
+                d.CompletedAt, d.CreatedAt,
+                d.LockedByNode == null ? null : d.LockedByNode.Name,
+                d.FailureCategory))
             .ToListAsync();
     }
 
     public async Task<DeploymentResponse> GetDeploymentAsync(Guid deploymentId, Guid userId)
     {
         var deployment = await _db.Deployments
+            .Include(d => d.LockedByNode)
             .Include(d => d.Service)
                 .ThenInclude(s => s.Project)
             .FirstOrDefaultAsync(d => d.Id == deploymentId && d.Service.Project.UserId == userId)
@@ -83,7 +88,8 @@ public class DeploymentService
             deployment.Id, deployment.ServiceId, deployment.Status,
             deployment.ImageTag, deployment.ErrorMessage,
             deployment.Version, deployment.StartedAt,
-            deployment.CompletedAt, deployment.CreatedAt);
+            deployment.CompletedAt, deployment.CreatedAt,
+            deployment.LockedByNode?.Name, deployment.FailureCategory);
     }
 
     public async Task<DeploymentLogsResponse> GetDeploymentLogsAsync(Guid deploymentId, Guid userId)

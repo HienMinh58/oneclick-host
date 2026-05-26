@@ -26,6 +26,10 @@ ONECLICK_PROJECT_LABEL = "com.oneclickhost.project-name"
 ONECLICK_SERVICE_NAME_LABEL = "com.oneclickhost.service-name"
 
 
+def slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-")
+
+
 def get_client():
     """Lazily initialize the Docker client."""
     global _client
