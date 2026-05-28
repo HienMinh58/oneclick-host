@@ -1,7 +1,9 @@
 import { ArrowLeft, ExternalLink, Loader2, Play, Plus, ServerCog, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { ComposeServicesPanel } from "@/components/app/ComposeServicesPanel";
 import { ComposeStackPanel } from "@/components/app/ComposeStackPanel";
+import { DeploymentGraphPanel } from "@/components/app/DeploymentGraphPanel";
 import { PageHeader } from "@/components/app/PageHeader";
 import { StatusBadge } from "@/components/app/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -93,6 +95,7 @@ export function ProjectDetailPage() {
   };
 
   const publicService = serviceType !== "database" && serviceType !== "redis";
+  const hasComposeConfig = Boolean(project?.composeConfig?.repoUrl);
 
   const deployService = async (serviceId: string) => {
     setPendingAction(`deploy-service-${serviceId}`);
@@ -236,9 +239,12 @@ export function ProjectDetailPage() {
         <TabsList>
           <TabsTrigger value="services">Services</TabsTrigger>
           <TabsTrigger value="compose">Compose stack</TabsTrigger>
+          <TabsTrigger value="graph">Deployment graph</TabsTrigger>
         </TabsList>
         <TabsContent value="services">
-          {project.services.length === 0 ? (
+          {hasComposeConfig ? (
+            <ComposeServicesPanel project={project} projectId={projectId} />
+          ) : project.services.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
                 <ServerCog className="h-10 w-10 text-muted-foreground" />
@@ -268,14 +274,18 @@ export function ProjectDetailPage() {
                       <StatusBadge status={service.status} />
                     </div>
                   </CardHeader>
-                  <CardContent className="flex items-center justify-between gap-3">
-                    {service.liveUrl ? (
-                      <a href={service.liveUrl} className="inline-flex min-w-0 items-center gap-1 truncate text-sm text-primary" target="_blank" rel="noreferrer">
-                        <ExternalLink className="h-3.5 w-3.5 shrink-0" /> {service.liveUrl}
-                      </a>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">Not deployed</span>
-                    )}
+                  <CardContent className="flex items-end justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <p className="text-xs font-semibold uppercase text-muted-foreground">Live URL</p>
+                      {service.liveUrl ? (
+                        <a href={service.liveUrl} className="inline-flex max-w-full items-center gap-1 truncate text-sm text-primary" target="_blank" rel="noreferrer">
+                          <span className="truncate">{service.liveUrl}</span>
+                          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                        </a>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Not deployed yet</span>
+                      )}
+                    </div>
                     <Button size="sm" onClick={() => deployService(service.id)} disabled={pendingAction === `deploy-service-${service.id}`}>
                       {pendingAction === `deploy-service-${service.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                       Deploy
@@ -294,6 +304,9 @@ export function ProjectDetailPage() {
             onProjectChanged={loadProject}
             onRunProjectAction={runProjectAction}
           />
+        </TabsContent>
+        <TabsContent value="graph">
+          <DeploymentGraphPanel projectId={projectId} hasComposeConfig={hasComposeConfig} />
         </TabsContent>
       </Tabs>
     </div>

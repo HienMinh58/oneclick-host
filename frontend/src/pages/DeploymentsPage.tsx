@@ -1,11 +1,11 @@
-import { BrainCircuit, Copy, Download, Filter, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { Copy, Download, Filter, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/app/EmptyState";
 import { PageHeader } from "@/components/app/PageHeader";
 import { StatusBadge } from "@/components/app/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { api, type AiDiagnosis } from "@/lib/api";
+import { api } from "@/lib/api";
 import {
   collectDeployments,
   deploymentMessage,
@@ -22,9 +22,6 @@ export function DeploymentsPage() {
   const [logs, setLogs] = useState("");
   const [loading, setLoading] = useState(true);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [diagnosis, setDiagnosis] = useState<AiDiagnosis | null>(null);
-  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
-  const [diagnosisError, setDiagnosisError] = useState<string | null>(null);
   const [filterErrors, setFilterErrors] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const logRef = useRef<HTMLPreElement>(null);
@@ -49,14 +46,10 @@ export function DeploymentsPage() {
   useEffect(() => {
     if (!selected) {
       setLogs("");
-      setDiagnosis(null);
-      setDiagnosisError(null);
       return;
     }
 
     setLogsLoading(true);
-    setDiagnosis(null);
-    setDiagnosisError(null);
     const request =
       selected.kind === "project"
         ? api.getProjectDeploymentLogs(selected.id)
@@ -69,15 +62,6 @@ export function DeploymentsPage() {
         setLogs(error instanceof Error ? error.message : "Could not load deployment logs.");
       })
       .finally(() => setLogsLoading(false));
-
-    if (selected.kind === "service" && selected.hasAiDiagnosis) {
-      setDiagnosisLoading(true);
-      api
-        .getAiDiagnosis(selected.id)
-        .then(setDiagnosis)
-        .catch(() => setDiagnosisError(null))
-        .finally(() => setDiagnosisLoading(false));
-    }
   }, [selected]);
 
   useEffect(() => {
@@ -103,22 +87,6 @@ export function DeploymentsPage() {
     link.click();
     URL.revokeObjectURL(url);
     toast.success("Logs downloaded");
-  };
-
-  const diagnoseLogs = async () => {
-    if (!selected || selected.kind !== "service") return;
-    setDiagnosisLoading(true);
-    setDiagnosisError(null);
-    try {
-      const result = await api.generateAiDiagnosis(selected.id);
-      setDiagnosis(result);
-      toast.success("Diagnosis ready");
-    } catch (error) {
-      setDiagnosisError(error instanceof Error ? error.message : "Could not diagnose these logs right now.");
-      toast.error(error instanceof Error ? error.message : "Could not diagnose these logs right now.");
-    } finally {
-      setDiagnosisLoading(false);
-    }
   };
 
   return (
@@ -190,7 +158,6 @@ export function DeploymentsPage() {
                 </CardContent>
               </Card>
 
-              <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
               <Card className="min-w-0 overflow-hidden">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -206,15 +173,6 @@ export function DeploymentsPage() {
                     <Button variant={autoScroll ? "default" : "ghost"} size="sm" onClick={() => setAutoScroll((value) => !value)}>
                       <RefreshCw className="h-4 w-4" /> Auto-scroll
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={diagnoseLogs}
-                      disabled={selected.kind !== "service" || diagnosisLoading}
-                    >
-                      {diagnosisLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BrainCircuit className="h-4 w-4" />}
-                      Diagnose
-                    </Button>
                     <Button variant="ghost" size="sm" onClick={copyLogs} disabled={!logs}>
                       <Copy className="h-4 w-4" /> Copy
                     </Button>
@@ -227,73 +185,6 @@ export function DeploymentsPage() {
                   {logsLoading ? "Loading logs..." : logs}
                 </pre>
               </Card>
-              <Card className="min-w-0 overflow-hidden">
-                <CardContent className="space-y-4 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                      <Sparkles className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="text-sm font-semibold">Diagnose logs</h3>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Generate a focused root-cause summary from the captured deployment snapshot.
-                      </p>
-                    </div>
-                  </div>
-
-                  {selected.kind !== "service" ? (
-                    <p className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-                      AI diagnosis is available for service deployments. Project stack diagnosis can be added when the backend exposes a project deployment diagnosis API.
-                    </p>
-                  ) : diagnosisLoading ? (
-                    <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Diagnosing deployment logs...
-                    </div>
-                  ) : diagnosis ? (
-                    <div className="space-y-4">
-                      <div className="rounded-md border border-border bg-muted/30 p-3">
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-medium text-foreground">{diagnosis.diagnosis.rootCauseCategory}</span>
-                          <span className="rounded bg-primary/10 px-2 py-0.5 text-primary">{diagnosis.diagnosis.confidence} confidence</span>
-                        </div>
-                        <p className="mt-2 text-sm leading-6">{diagnosis.diagnosis.diagnosis}</p>
-                      </div>
-                      {diagnosis.diagnosis.evidence.length > 0 && (
-                        <div>
-                          <p className="text-xs font-semibold uppercase text-muted-foreground">Evidence</p>
-                          <ul className="mt-2 space-y-2 text-xs leading-5 text-muted-foreground">
-                            {diagnosis.diagnosis.evidence.map((item) => (
-                              <li key={item} className="rounded border border-border bg-background px-3 py-2">{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {diagnosis.diagnosis.suggestedFixes.length > 0 && (
-                        <div>
-                          <p className="text-xs font-semibold uppercase text-muted-foreground">Suggested fixes</p>
-                          <ul className="mt-2 space-y-2 text-xs leading-5 text-muted-foreground">
-                            {diagnosis.diagnosis.suggestedFixes.map((item) => (
-                              <li key={item} className="rounded border border-border bg-background px-3 py-2">{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {diagnosisError && (
-                        <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
-                          {diagnosisError}
-                        </p>
-                      )}
-                      <Button className="w-full" onClick={diagnoseLogs} disabled={diagnosisLoading}>
-                        <BrainCircuit className="h-4 w-4" /> Diagnose logs
-                      </Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-              </div>
             </div>
           ) : (
             <EmptyState

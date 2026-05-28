@@ -74,6 +74,22 @@ public record ComposeServiceSuggestion(
     bool LooksPublic
 );
 
+public record ComposeServiceResponse(
+    string Name,
+    string Type,
+    string? Image,
+    string? BuildContext,
+    string? Command,
+    List<int> Ports,
+    List<string> EnvironmentKeys,
+    List<string> Dependencies,
+    List<string> Volumes,
+    List<string> Networks,
+    List<ComposeRouteResponse> Routes,
+    bool IsPublic,
+    string Status
+);
+
 public record ComposeRouteRequest(
     [Required, MaxLength(100)] string ServiceName,
     [Required, MaxLength(100)] string RouteSlug,
@@ -146,4 +162,25 @@ public record RouteTargetResponse(
     string Status,
     string? ExecutionNodeName,
     DateTime UpdatedAt
+);
+
+public record DeploymentGraphResponse(
+    List<DeploymentGraphNodeResponse> Nodes,
+    List<DeploymentGraphEdgeResponse> Edges
+);
+
+public record DeploymentGraphNodeResponse(
+    string Id,
+    string Type,
+    string Label,
+    Dictionary<string, string> Metadata
+);
+
+public record DeploymentGraphEdgeResponse(
+    string Id,
+    string Type,
+    string Source,
+    string Target,
+    string Label,
+    Dictionary<string, string> Metadata
 );

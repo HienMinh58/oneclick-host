@@ -102,10 +102,9 @@ export function ComposeStackPanel({
 
   const latestDeployment = project.recentProjectDeployments[0] || null;
   const routeTargets = latestDeployment?.routeTargets || [];
-  const hasConfiguredRoutes = routes.length > 0;
   const duplicateRouteSlugs = findDuplicates(routes.map((route) => route.routeSlug.trim()).filter(Boolean));
   const duplicateEnvKeys = findDuplicates(envVars.map((envVar) => `${envVar.serviceName}:${envVar.key}`).filter((key) => !key.endsWith(":")));
-  const canSave = repoUrl.trim().length > 0 && hasConfiguredRoutes && duplicateRouteSlugs.length === 0 && duplicateEnvKeys.length === 0;
+  const canSave = repoUrl.trim().length > 0 && duplicateRouteSlugs.length === 0 && duplicateEnvKeys.length === 0;
 
   const inspectCompose = async () => {
     setInspecting(true);
@@ -132,7 +131,7 @@ export function ComposeStackPanel({
 
   const saveConfig = async () => {
     if (!canSave) {
-      toast.error("Set repository and at least one unique public route before saving");
+      toast.error("Set a repository and resolve duplicate route or environment keys before saving");
       return;
     }
 
@@ -276,11 +275,11 @@ export function ComposeStackPanel({
 
           {!canSave && (
             <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm">
-              <AlertTriangle className="mt-0.5 h-4 w-4 text-warning" />
+                  <AlertTriangle className="mt-0.5 h-4 w-4 text-warning" />
               <div className="min-w-0">
                 <p className="font-medium">Configuration needs attention</p>
                 <p className="mt-1 text-muted-foreground">
-                  Add a repository and at least one unique route slug before deploy. Route slugs map to public hostnames.
+                  Add a repository and resolve any duplicate route slugs or environment keys before saving.
                 </p>
               </div>
             </div>
@@ -519,7 +518,7 @@ export function ComposeStackPanel({
               {pendingAction === "stop-stack" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
               Stop stack
             </Button>
-            <Button onClick={() => onRunProjectAction("deploy")} disabled={pendingAction === "deploy-stack" || !config}>
+            <Button onClick={() => onRunProjectAction("deploy")} disabled={pendingAction === "deploy-stack" || !config || config.routes.length === 0}>
               {pendingAction === "deploy-stack" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               Deploy stack
             </Button>

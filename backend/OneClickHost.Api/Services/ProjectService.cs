@@ -100,26 +100,7 @@ public class ProjectService
         if (string.IsNullOrWhiteSpace(subfolder) && subfolderFromUrl is not null)
             subfolder = subfolderFromUrl;
 
-        var candidatePaths = string.IsNullOrWhiteSpace(composeFile)
-            ? ComposeFileCandidates.Select(candidate => (ComposeFile: candidate, RawPath: JoinRepoPath(subfolder, candidate))).ToList()
-            : [(ComposeFile: composeFile, RawPath: JoinRepoPath(subfolder, composeFile))];
-
-        string? yamlContent = null;
-        string? resolvedComposeFile = null;
-        foreach (var candidatePath in candidatePaths)
-        {
-            var url = $"https://raw.githubusercontent.com/{owner}/{repo}/{Uri.EscapeDataString(branch)}/{candidatePath.RawPath}";
-            var response = await ComposeHttpClient.GetAsync(url);
-            if (!response.IsSuccessStatusCode)
-                continue;
-
-            yamlContent = await response.Content.ReadAsStringAsync();
-            resolvedComposeFile = candidatePath.ComposeFile;
-            break;
-        }
-
-        if (yamlContent is null || resolvedComposeFile is null)
-            throw new ArgumentException("Could not find a compose file in this repository. Set the branch, subfolder, or compose file path and try again.");
+        var (resolvedComposeFile, yamlContent) = await FetchComposeYamlAsync(owner, repo, branch, subfolder, composeFile);
 
         var services = ParseComposeServices(yamlContent);
         if (services.Count == 0)
@@ -143,6 +124,73 @@ public class ProjectService
         // key can belong to multiple services with different values, so users
         // should enter them explicitly in the UI.
         return new ComposeInspectResponse(resolvedComposeFile, services, suggestedRoutes, []);
+    }
+
+    public async Task<DeploymentGraphResponse> GetDeploymentGraphAsync(Guid projectId, Guid userId)
+    {
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == userId)
+            ?? throw new KeyNotFoundException("Project not found.");
+
+        if (string.IsNullOrWhiteSpace(project.RepoUrl))
+            throw new ArgumentException("Compose repository URL is required before a deployment graph can be built.");
+
+        var branch = string.IsNullOrWhiteSpace(project.Branch) ? "main" : project.Branch.Trim();
+        var subfolder = NormalizeRelativePath(project.Subfolder);
+        var composeFile = NormalizeRelativePath(project.ComposeFile);
+        var (owner, repo, branchFromUrl, subfolderFromUrl) = ParseGitHubRepo(project.RepoUrl);
+
+        if (string.IsNullOrWhiteSpace(project.Branch) && branchFromUrl is not null)
+            branch = branchFromUrl;
+        if (string.IsNullOrWhiteSpace(subfolder) && subfolderFromUrl is not null)
+            subfolder = subfolderFromUrl;
+
+        try
+        {
+            var (_, yamlContent) = await FetchComposeYamlAsync(owner, repo, branch, subfolder, composeFile);
+            return DeploymentGraphParser.Parse(yamlContent);
+        }
+        catch (ArgumentException)
+        {
+            return BuildConfiguredDeploymentGraph(project, branch, subfolder, composeFile);
+        }
+    }
+
+    public async Task<List<ComposeServiceResponse>> GetComposeServicesAsync(Guid projectId, Guid userId)
+    {
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == userId)
+            ?? throw new KeyNotFoundException("Project not found.");
+
+        if (string.IsNullOrWhiteSpace(project.RepoUrl))
+            return [];
+
+        var branch = string.IsNullOrWhiteSpace(project.Branch) ? "main" : project.Branch.Trim();
+        var subfolder = NormalizeRelativePath(project.Subfolder);
+        var composeFile = NormalizeRelativePath(project.ComposeFile);
+        var (owner, repo, branchFromUrl, subfolderFromUrl) = ParseGitHubRepo(project.RepoUrl);
+        var liveUrls = ReadStringList(project.ComposeLiveUrlsJson);
+        var routes = ReadRoutes(project.ComposeRoutesJson)
+            .Select(route => route with { LiveUrl = FindRouteLiveUrl(route, liveUrls) })
+            .ToList();
+        var envVars = ReadEnvVars(project.ComposeEnvJson)
+            .Select(ev => ev with { Value = ev.IsSecret ? SecretMask : _secrets.Decrypt(ev.Value) })
+            .ToList();
+
+        if (string.IsNullOrWhiteSpace(project.Branch) && branchFromUrl is not null)
+            branch = branchFromUrl;
+        if (string.IsNullOrWhiteSpace(subfolder) && subfolderFromUrl is not null)
+            subfolder = subfolderFromUrl;
+
+        try
+        {
+            var (_, yamlContent) = await FetchComposeYamlAsync(owner, repo, branch, subfolder, composeFile);
+            return ComposeServiceListParser.Parse(yamlContent, routes, envVars, project.Status);
+        }
+        catch (ArgumentException)
+        {
+            return BuildConfiguredComposeServices(project, routes, envVars);
+        }
     }
 
     public async Task<ComposeConfigResponse> UpdateComposeConfigAsync(Guid projectId, Guid userId, ComposeConfigRequest request)
@@ -270,7 +318,7 @@ public class ProjectService
     private static List<ComposeRouteResponse> NormalizeRoutes(List<ComposeRouteRequest> routes)
     {
         if (routes.Count == 0)
-            throw new ArgumentException("At least one public route is required.");
+            return [];
 
         var normalized = routes.Select(route =>
         {
@@ -486,6 +534,30 @@ public class ProjectService
         return (segments[0], repo, branch, subfolder);
     }
 
+    private static async Task<(string ComposeFile, string YamlContent)> FetchComposeYamlAsync(
+        string owner,
+        string repo,
+        string branch,
+        string? subfolder,
+        string? composeFile)
+    {
+        var candidatePaths = string.IsNullOrWhiteSpace(composeFile)
+            ? ComposeFileCandidates.Select(candidate => (ComposeFile: candidate, RawPath: JoinRepoPath(subfolder, candidate))).ToList()
+            : [(ComposeFile: composeFile, RawPath: JoinRepoPath(subfolder, composeFile))];
+
+        foreach (var candidatePath in candidatePaths)
+        {
+            var url = $"https://raw.githubusercontent.com/{owner}/{repo}/{Uri.EscapeDataString(branch)}/{candidatePath.RawPath}";
+            var response = await ComposeHttpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+                continue;
+
+            return (candidatePath.ComposeFile, await response.Content.ReadAsStringAsync());
+        }
+
+        throw new ArgumentException("Could not find a compose file in this repository. Set the branch, subfolder, or compose file path and try again.");
+    }
+
     private static string? NormalizeRelativePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -651,6 +723,163 @@ public class ProjectService
         string.IsNullOrWhiteSpace(json)
             ? []
             : JsonSerializer.Deserialize<List<string>>(json, JsonOptions) ?? [];
+
+    private DeploymentGraphResponse BuildConfiguredDeploymentGraph(Project project, string branch, string? subfolder, string? composeFile)
+    {
+        var nodes = new List<DeploymentGraphNodeResponse>();
+        var edges = new List<DeploymentGraphEdgeResponse>();
+        var routes = ReadRoutes(project.ComposeRoutesJson);
+        var envVars = ReadEnvVars(project.ComposeEnvJson);
+        var serviceNames = routes.Select(route => route.ServiceName)
+            .Concat(envVars.Select(env => env.ServiceName))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .DefaultIfEmpty(ToSlug(project.Name) is { Length: > 0 } slug ? slug : "app")
+            .ToList();
+
+        foreach (var serviceName in serviceNames)
+        {
+            var serviceId = $"service:{serviceName}";
+            nodes.Add(new DeploymentGraphNodeResponse(
+                serviceId,
+                "service",
+                serviceName,
+                new Dictionary<string, string>
+                {
+                    ["repoUrl"] = project.RepoUrl ?? "",
+                    ["branch"] = branch,
+                    ["subfolder"] = subfolder ?? "",
+                    ["composeFile"] = composeFile ?? "",
+                    ["containerization"] = "generated Dockerfile",
+                    ["source"] = "saved project config"
+                }));
+        }
+
+        if (routes.Count > 0)
+        {
+            var publicNetworkId = "network:public";
+            nodes.Add(new DeploymentGraphNodeResponse(
+                publicNetworkId,
+                "network",
+                "public",
+                new Dictionary<string, string> { ["scope"] = "external" }));
+
+            foreach (var route in routes)
+            {
+                var metadata = new Dictionary<string, string>
+                {
+                    ["slug"] = route.RouteSlug,
+                    ["target"] = route.InternalPort.ToString(),
+                    ["provider"] = route.ExposureProvider
+                };
+                if (!string.IsNullOrWhiteSpace(route.HealthPath))
+                    metadata["healthPath"] = route.HealthPath;
+                edges.Add(new DeploymentGraphEdgeResponse(
+                    $"exposes:service:{route.ServiceName}:network:public:{route.RouteSlug}",
+                    "exposes",
+                    $"service:{route.ServiceName}",
+                    publicNetworkId,
+                    route.RouteSlug,
+                    metadata));
+            }
+        }
+
+        foreach (var envVar in envVars)
+        {
+            var serviceName = string.IsNullOrWhiteSpace(envVar.ServiceName) ? serviceNames[0] : envVar.ServiceName;
+            var envId = $"env:{serviceName}:{envVar.Key}";
+            nodes.Add(new DeploymentGraphNodeResponse(
+                envId,
+                "env_var",
+                envVar.Key,
+                new Dictionary<string, string>
+                {
+                    ["service"] = serviceName,
+                    ["value"] = envVar.IsSecret ? SecretMask : _secrets.Decrypt(envVar.Value)
+                }));
+            edges.Add(new DeploymentGraphEdgeResponse(
+                $"uses_env:service:{serviceName}:{envId}",
+                "uses_env",
+                $"service:{serviceName}",
+                envId,
+                envVar.Key,
+                []));
+        }
+
+        nodes.Add(new DeploymentGraphNodeResponse(
+            "network:oneclick-runtime",
+            "network",
+            "oneclick runtime",
+            new Dictionary<string, string> { ["scope"] = "internal" }));
+        foreach (var serviceName in serviceNames)
+        {
+            edges.Add(new DeploymentGraphEdgeResponse(
+                $"connects_to:service:{serviceName}:network:oneclick-runtime",
+                "connects_to",
+                $"service:{serviceName}",
+                "network:oneclick-runtime",
+                "oneclick runtime",
+                []));
+        }
+
+        return new DeploymentGraphResponse(
+            nodes.GroupBy(node => node.Id).Select(group => group.First()).ToList(),
+            edges.GroupBy(edge => edge.Id).Select(group => group.First()).ToList());
+    }
+
+    private static List<ComposeServiceResponse> BuildConfiguredComposeServices(
+        Project project,
+        List<ComposeRouteResponse> routes,
+        List<ComposeEnvVarResponse> envVars)
+    {
+        var serviceNames = routes.Select(route => route.ServiceName)
+            .Concat(envVars.Select(env => env.ServiceName))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .DefaultIfEmpty(ToSlug(project.Name) is { Length: > 0 } slug ? slug : "app")
+            .ToList();
+
+        return serviceNames.Select(serviceName =>
+        {
+            var serviceRoutes = routes
+                .Where(route => route.ServiceName.Equals(serviceName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var serviceEnvKeys = envVars
+                .Where(env => string.IsNullOrWhiteSpace(env.ServiceName) || env.ServiceName.Equals(serviceName, StringComparison.OrdinalIgnoreCase))
+                .Select(env => env.Key)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(key => key)
+                .ToList();
+
+            return new ComposeServiceResponse(
+                serviceName,
+                "service",
+                null,
+                null,
+                null,
+                serviceRoutes.Select(route => route.InternalPort).Distinct().OrderBy(port => port).ToList(),
+                serviceEnvKeys,
+                [],
+                [],
+                ["oneclick-runtime"],
+                serviceRoutes,
+                serviceRoutes.Count > 0,
+                ToConfiguredComposeServiceStatus(project.Status, serviceRoutes)
+            );
+        }).ToList();
+    }
+
+    private static string ToConfiguredComposeServiceStatus(string projectStatus, List<ComposeRouteResponse> routes)
+    {
+        if (projectStatus.Equals("live", StringComparison.OrdinalIgnoreCase))
+            return routes.Any(route => !string.IsNullOrWhiteSpace(route.LiveUrl)) ? "live" : "configured";
+        if (projectStatus.Equals("queued", StringComparison.OrdinalIgnoreCase)
+            || projectStatus.Equals("deploying", StringComparison.OrdinalIgnoreCase)
+            || projectStatus.Equals("failed", StringComparison.OrdinalIgnoreCase)
+            || projectStatus.Equals("stopped", StringComparison.OrdinalIgnoreCase))
+            return projectStatus.ToLowerInvariant();
+        return "configured";
+    }
 
     private static string? FindRouteLiveUrl(ComposeRouteResponse route, List<string> liveUrls)
     {
