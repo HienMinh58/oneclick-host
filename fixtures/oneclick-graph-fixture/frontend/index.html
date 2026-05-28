@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OneClick Graph Fixture</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      main {
+        max-width: 760px;
+        margin: 64px auto;
+        padding: 0 24px;
+      }
+      section {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        background: white;
+        padding: 24px;
+      }
+      code {
+        border-radius: 6px;
+        background: #f1f5f9;
+        padding: 2px 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>OneClick Graph Fixture</h1>
+        <p>This frontend depends on <code>api</code>, which depends on <code>db</code> and <code>redis</code>.</p>
+        <p id="status">Checking API...</p>
+      </section>
+    </main>
+    <script>
+      fetch("/api/health")
+        .then((response) => response.json())
+        .then((data) => {
+          document.getElementById("status").textContent = `API status: ${data.status}`;
+        })
+        .catch(() => {
+          document.getElementById("status").textContent = "API is not reachable from the browser route.";
+        });
+    </script>
+  </body>
+</html>
