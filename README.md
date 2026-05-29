@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo_v2.png" alt="OneClick-Host Logo" width="200"/>
+  <img src="assets/readme/logo_v3.png" alt="OneClick-Host Logo" width="200"/>
 </p>
 
 # OneClick-Host 🚀
@@ -13,7 +13,23 @@
 
 OneClick-Host is a sophisticated, self-hosted deployment platform engineered for researchers, students, and small project teams. It serves as your private cloud infrastructure—similar to Vercel or Heroku—but entirely under your control. Simply provide a GitHub repository, and the platform handles the rest: stack detection, automated containerization, and live deployment with dynamic routing.
 
-![Dashboard Preview](assets/dashboard_new.png)
+## Product Screenshots
+
+### Dashboard
+
+![Dashboard Demo](assets/readme/dashboard-demo.png)
+
+### Compose Stack Graph
+
+![Compose Stack Graph Demo](assets/readme/compose-stack-graph-demo.png)
+
+### AI Deployment Diagnosis
+
+![AI Diagnose Demo](assets/readme/ai-diagnose-demo.png)
+
+### Cloudflare Quick Tunnel
+
+![Cloudflare Quick Tunnel Demo](assets/readme/cloudflare-tunnerl-demo.png)
 
 ## ✨ Core Features
 
@@ -48,6 +64,12 @@ The platform leverages a robust microservices architecture orchestrated via Dock
 6. **Routing:** A YAML routing configuration is generated for Traefik, enabling instant global access.
 
 When a deployment fails, the worker stores a diagnostic snapshot before cleanup. The snapshot includes the failed step, detected stack when available, a bounded log excerpt, a compact repository tree, and selected relevant files. The dashboard can then request a stored one-shot AI diagnosis without re-cloning the repository or re-running the deployment.
+
+### Cloudflare Quick Tunnel Preview URLs
+
+Compose routes and single service deployments can optionally use Cloudflare Quick Tunnel instead of Traefik. This starts a managed `cloudflare/cloudflared` sidecar for the selected HTTP service and publishes it through a temporary `https://*.trycloudflare.com` URL.
+
+Quick Tunnel mode does not require a Cloudflare account, token, or domain. It is intended for demos and previews: URLs are temporary and can change after redeploys or restarts. Database and Redis services remain internal-only. Use Traefik or a named Cloudflare Tunnel for stable production domains.
 
 ## 💻 Supported Ecosystems
 
@@ -166,4 +188,3 @@ Our internal pipeline ensures stability across all components:
 ## 📄 License
 
 This project is licensed under the MIT License.
-

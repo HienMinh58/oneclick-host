@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Boxes,
   CheckCircle2,
+  Cloud,
   ExternalLink,
   Eye,
   EyeOff,
@@ -32,6 +33,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   api,
@@ -54,6 +56,10 @@ type ComposeStackPanelProps = {
 
 const fixtureRepo = "https://github.com/tuankiet18-dev/oneclick-compose-fixture";
 const secretMask = "******";
+const exposureOptions = [
+  { value: "traefik", label: "Traefik" },
+  { value: "cloudflare_quick", label: "Cloudflare quick" },
+] as const;
 
 export function ComposeStackPanel({
   project,
@@ -96,10 +102,9 @@ export function ComposeStackPanel({
 
   const latestDeployment = project.recentProjectDeployments[0] || null;
   const routeTargets = latestDeployment?.routeTargets || [];
-  const hasConfiguredRoutes = routes.length > 0;
   const duplicateRouteSlugs = findDuplicates(routes.map((route) => route.routeSlug.trim()).filter(Boolean));
   const duplicateEnvKeys = findDuplicates(envVars.map((envVar) => `${envVar.serviceName}:${envVar.key}`).filter((key) => !key.endsWith(":")));
-  const canSave = repoUrl.trim().length > 0 && hasConfiguredRoutes && duplicateRouteSlugs.length === 0 && duplicateEnvKeys.length === 0;
+  const canSave = repoUrl.trim().length > 0 && duplicateRouteSlugs.length === 0 && duplicateEnvKeys.length === 0;
 
   const inspectCompose = async () => {
     setInspecting(true);
@@ -126,7 +131,7 @@ export function ComposeStackPanel({
 
   const saveConfig = async () => {
     if (!canSave) {
-      toast.error("Set repository and at least one unique public route before saving");
+      toast.error("Set a repository and resolve duplicate route or environment keys before saving");
       return;
     }
 
@@ -166,8 +171,8 @@ export function ComposeStackPanel({
     setSubfolder("");
     setComposeFile("docker-compose.yml");
     setRoutes([
-      { serviceName: "frontend", routeSlug: "app", internalPort: 3000, healthPath: "/" },
-      { serviceName: "api", routeSlug: "api", internalPort: 8000, healthPath: "/health" },
+      { serviceName: "frontend", routeSlug: "app", internalPort: 3000, exposureProvider: "traefik", healthPath: "/" },
+      { serviceName: "api", routeSlug: "api", internalPort: 8000, exposureProvider: "traefik", healthPath: "/health" },
     ]);
     setEnvVars([
       {
@@ -187,6 +192,7 @@ export function ComposeStackPanel({
         serviceName,
         routeSlug: toSlug(serviceName || "app"),
         internalPort,
+        exposureProvider: "traefik",
         healthPath: serviceName.toLowerCase().includes("api") ? "/health" : "/",
       },
     ]);
@@ -269,11 +275,11 @@ export function ComposeStackPanel({
 
           {!canSave && (
             <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm">
-              <AlertTriangle className="mt-0.5 h-4 w-4 text-warning" />
+                  <AlertTriangle className="mt-0.5 h-4 w-4 text-warning" />
               <div className="min-w-0">
                 <p className="font-medium">Configuration needs attention</p>
                 <p className="mt-1 text-muted-foreground">
-                  Add a repository and at least one unique route slug before deploy. Route slugs map to public hostnames.
+                  Add a repository and resolve any duplicate route slugs or environment keys before saving.
                 </p>
               </div>
             </div>
@@ -359,7 +365,7 @@ export function ComposeStackPanel({
             ) : (
               <div className="space-y-2">
                 {routes.map((route, index) => (
-                  <div key={`${route.serviceName}-${index}`} className="grid gap-2 rounded-md border p-3 lg:grid-cols-[1.2fr_1fr_110px_1fr_auto]">
+                  <div key={`${route.serviceName}-${index}`} className="grid gap-2 rounded-md border p-3 lg:grid-cols-[1.1fr_0.9fr_110px_1fr_1fr_auto]">
                     <Field label="Service" htmlFor={`route-service-${index}`}>
                       <Input
                         id={`route-service-${index}`}
@@ -386,6 +392,23 @@ export function ComposeStackPanel({
                         value={route.internalPort}
                         onChange={(event) => updateRoute(index, { internalPort: Number(event.target.value) })}
                       />
+                    </Field>
+                    <Field label="Expose" htmlFor={`route-exposure-${index}`}>
+                      <Select
+                        value={route.exposureProvider || "traefik"}
+                        onValueChange={(value) => updateRoute(index, { exposureProvider: value as ComposeRoute["exposureProvider"] })}
+                      >
+                        <SelectTrigger id={`route-exposure-${index}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {exposureOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </Field>
                     <Field label="Health" htmlFor={`route-health-${index}`}>
                       <Input
@@ -495,7 +518,7 @@ export function ComposeStackPanel({
               {pendingAction === "stop-stack" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
               Stop stack
             </Button>
-            <Button onClick={() => onRunProjectAction("deploy")} disabled={pendingAction === "deploy-stack" || !config}>
+            <Button onClick={() => onRunProjectAction("deploy")} disabled={pendingAction === "deploy-stack" || !config || config.routes.length === 0}>
               {pendingAction === "deploy-stack" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               Deploy stack
             </Button>
@@ -528,7 +551,7 @@ export function ComposeStackPanel({
               <div className="min-w-0 rounded-md border">
                 <div className="border-b px-4 py-3 text-sm font-medium">Route targets</div>
                 {routeTargets.length === 0 ? (
-                  <div className="p-4 text-sm text-muted-foreground">No route targets recorded yet.</div>
+                  <div className="p-4 text-sm text-muted-foreground">No route targets recorded yet. Cloudflare quick routes appear in live URLs.</div>
                 ) : (
                   <div className="divide-y">
                     {routeTargets.map((target) => (
@@ -558,7 +581,7 @@ export function ComposeStackPanel({
             <div className="flex flex-wrap gap-2">
               {config.liveUrls.map((url) => (
                 <a key={url} href={url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1 rounded-md border px-3 py-2 text-sm text-primary hover:bg-muted">
-                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  {url.includes("trycloudflare.com") ? <Cloud className="h-3.5 w-3.5 shrink-0" /> : <ExternalLink className="h-3.5 w-3.5 shrink-0" />}
                   <span className="truncate">{url}</span>
                 </a>
               ))}

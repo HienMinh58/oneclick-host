@@ -1,7 +1,9 @@
 import { ArrowLeft, ExternalLink, Loader2, Play, Plus, ServerCog, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { ComposeServicesPanel } from "@/components/app/ComposeServicesPanel";
 import { ComposeStackPanel } from "@/components/app/ComposeStackPanel";
+import { DeploymentGraphPanel } from "@/components/app/DeploymentGraphPanel";
 import { PageHeader } from "@/components/app/PageHeader";
 import { StatusBadge } from "@/components/app/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -16,8 +18,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api, type ProjectDetail } from "@/lib/api";
+import { api, type ExposureProvider, type ProjectDetail } from "@/lib/api";
 import { toast } from "sonner";
 
 export function ProjectDetailPage() {
@@ -33,6 +36,7 @@ export function ProjectDetailPage() {
   const [branch, setBranch] = useState("main");
   const [subfolder, setSubfolder] = useState("");
   const [serviceType, setServiceType] = useState("frontend");
+  const [exposureProvider, setExposureProvider] = useState<ExposureProvider>("traefik");
   const [networkAliases, setNetworkAliases] = useState("");
 
   const loadProject = useCallback(() => {
@@ -57,12 +61,14 @@ export function ProjectDetailPage() {
         branch: serviceType === "database" || serviceType === "redis" ? undefined : branch || undefined,
         subfolder: serviceType === "database" || serviceType === "redis" ? undefined : subfolder || undefined,
         serviceType,
+        exposureProvider: serviceType === "database" || serviceType === "redis" ? undefined : exposureProvider,
         networkAliases: networkAliases || undefined,
       });
       setServiceName("");
       setRepoUrl("");
       setBranch("main");
       setSubfolder("");
+      setExposureProvider("traefik");
       setNetworkAliases("");
       setDialogOpen(false);
       loadProject();
@@ -87,6 +93,9 @@ export function ProjectDetailPage() {
       setPendingAction(null);
     }
   };
+
+  const publicService = serviceType !== "database" && serviceType !== "redis";
+  const hasComposeConfig = Boolean(project?.composeConfig?.repoUrl);
 
   const deployService = async (serviceId: string) => {
     setPendingAction(`deploy-service-${serviceId}`);
@@ -192,6 +201,20 @@ export function ProjectDetailPage() {
                       </div>
                     </>
                   )}
+                  {publicService && (
+                    <div className="space-y-2">
+                      <Label htmlFor="service-exposure">Expose</Label>
+                      <Select value={exposureProvider} onValueChange={(value) => setExposureProvider(value as ExposureProvider)}>
+                        <SelectTrigger id="service-exposure">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="traefik">Traefik</SelectItem>
+                          <SelectItem value="cloudflare_quick">Cloudflare quick</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label htmlFor="network-aliases">Network aliases</Label>
                     <Input id="network-aliases" value={networkAliases} onChange={(event) => setNetworkAliases(event.target.value)} placeholder="api,backend" />
@@ -216,9 +239,12 @@ export function ProjectDetailPage() {
         <TabsList>
           <TabsTrigger value="services">Services</TabsTrigger>
           <TabsTrigger value="compose">Compose stack</TabsTrigger>
+          <TabsTrigger value="graph">Deployment graph</TabsTrigger>
         </TabsList>
         <TabsContent value="services">
-          {project.services.length === 0 ? (
+          {hasComposeConfig ? (
+            <ComposeServicesPanel project={project} projectId={projectId} />
+          ) : project.services.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
                 <ServerCog className="h-10 w-10 text-muted-foreground" />
@@ -238,19 +264,28 @@ export function ProjectDetailPage() {
                         <Link to={`/projects/${projectId}/services/${service.id}`}>
                           <CardTitle className="text-base hover:text-primary">{service.name}</CardTitle>
                         </Link>
-                        <CardDescription>{service.serviceType} - {service.detectedStack || "not detected"}</CardDescription>
+                        <CardDescription>
+                          {service.serviceType} - {service.detectedStack || "not detected"}
+                          {service.serviceType === "database" || service.serviceType === "redis"
+                            ? ""
+                            : ` - ${service.exposureProvider === "cloudflare_quick" ? "Cloudflare quick" : "Traefik"}`}
+                        </CardDescription>
                       </div>
                       <StatusBadge status={service.status} />
                     </div>
                   </CardHeader>
-                  <CardContent className="flex items-center justify-between gap-3">
-                    {service.liveUrl ? (
-                      <a href={service.liveUrl} className="inline-flex min-w-0 items-center gap-1 truncate text-sm text-primary" target="_blank" rel="noreferrer">
-                        <ExternalLink className="h-3.5 w-3.5 shrink-0" /> {service.liveUrl}
-                      </a>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">Not deployed</span>
-                    )}
+                  <CardContent className="flex items-end justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <p className="text-xs font-semibold uppercase text-muted-foreground">Live URL</p>
+                      {service.liveUrl ? (
+                        <a href={service.liveUrl} className="inline-flex max-w-full items-center gap-1 truncate text-sm text-primary" target="_blank" rel="noreferrer">
+                          <span className="truncate">{service.liveUrl}</span>
+                          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                        </a>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Not deployed yet</span>
+                      )}
+                    </div>
                     <Button size="sm" onClick={() => deployService(service.id)} disabled={pendingAction === `deploy-service-${service.id}`}>
                       {pendingAction === `deploy-service-${service.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                       Deploy
@@ -269,6 +304,9 @@ export function ProjectDetailPage() {
             onProjectChanged={loadProject}
             onRunProjectAction={runProjectAction}
           />
+        </TabsContent>
+        <TabsContent value="graph">
+          <DeploymentGraphPanel projectId={projectId} hasComposeConfig={hasComposeConfig} />
         </TabsContent>
       </Tabs>
     </div>

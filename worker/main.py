@@ -111,7 +111,7 @@ def _failure_category(error: Exception) -> str:
         return "build"
     if "health" in value or "unhealthy" in value:
         return "healthcheck"
-    if "route" in value or "port" in value:
+    if "route" in value or "port" in value or "cloudflare" in value or "tunnel" in value:
         return "routing"
     if "container" in value or "stack" in value:
         return "startup"
@@ -296,6 +296,7 @@ def process_deployment(conn, deployment: dict):
     subfolder = deployment["Subfolder"]
     service_name = deployment["ServiceName"]
     service_type = deployment.get("ServiceType") or "frontend"
+    exposure_provider = deployment.get("ExposureProvider") or "traefik"
     project_name = deployment["ProjectName"]
     version = deployment["Version"]
 
@@ -457,6 +458,7 @@ def process_deployment(conn, deployment: dict):
             env_vars=env_vars,
             network_aliases=network_aliases,
             service_id=service_id,
+            exposure_provider=exposure_provider,
         )
 
 

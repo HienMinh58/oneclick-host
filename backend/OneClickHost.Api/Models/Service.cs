@@ -23,6 +23,9 @@ public class Service
     [MaxLength(20)]
     public string ServiceType { get; set; } = "frontend"; // frontend | backend
 
+    [MaxLength(40)]
+    public string ExposureProvider { get; set; } = "traefik"; // traefik | cloudflare_quick
+
     /// <summary>
     /// Comma-separated Docker network aliases for this container.
     /// Allows other containers to reach this service by custom hostnames.

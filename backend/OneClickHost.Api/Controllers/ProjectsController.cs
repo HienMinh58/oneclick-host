@@ -102,6 +102,44 @@ public class ProjectsController : ControllerBase
         }
     }
 
+    [HttpGet("{id:guid}/deployment-graph")]
+    public async Task<ActionResult<DeploymentGraphResponse>> GetDeploymentGraph(Guid id)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var result = await _projectService.GetDeploymentGraphAsync(id, userId);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Project not found." });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("{id:guid}/compose-services")]
+    public async Task<ActionResult<List<ComposeServiceResponse>>> GetComposeServices(Guid id)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var result = await _projectService.GetComposeServicesAsync(id, userId);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Project not found." });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("{id:guid}/deploy")]
     public async Task<ActionResult<ProjectDeploymentResponse>> DeployProject(Guid id)
     {

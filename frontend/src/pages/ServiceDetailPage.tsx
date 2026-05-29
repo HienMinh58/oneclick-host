@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, Loader2, Play, Save, Square, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BrainCircuit, ExternalLink, Loader2, Play, Save, Square, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeader } from "@/components/app/PageHeader";
@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api, type ServiceDetail } from "@/lib/api";
+import { api, type AiDiagnosis, type ExposureProvider, type ServiceDetail } from "@/lib/api";
 import { toast } from "sonner";
 
 export function ServiceDetailPage() {
@@ -19,6 +20,9 @@ export function ServiceDetailPage() {
   const [savingDetails, setSavingDetails] = useState(false);
   const [savingEnv, setSavingEnv] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [diagnosis, setDiagnosis] = useState<AiDiagnosis | null>(null);
+  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
+  const [diagnosisError, setDiagnosisError] = useState<string | null>(null);
   const [envVars, setEnvVars] = useState<ServiceDetail["environmentVariables"]>([]);
   const [logs, setLogs] = useState<string | null>(null);
   const [detailsForm, setDetailsForm] = useState({
@@ -27,6 +31,7 @@ export function ServiceDetailPage() {
     branch: "",
     subfolder: "",
     serviceType: "",
+    exposureProvider: "traefik" as ExposureProvider,
     networkAliases: "",
   });
 
@@ -42,6 +47,7 @@ export function ServiceDetailPage() {
           branch: data.branch || "main",
           subfolder: data.subfolder || "",
           serviceType: data.serviceType || "frontend",
+          exposureProvider: data.exposureProvider || "traefik",
           networkAliases: data.networkAliases || "",
         });
       })
@@ -52,6 +58,12 @@ export function ServiceDetailPage() {
   useEffect(() => {
     loadService();
   }, [loadService]);
+
+  useEffect(() => {
+    setDiagnosis(null);
+    setDiagnosisError(null);
+    setDiagnosisLoading(false);
+  }, [serviceId]);
 
   const deleteService = async () => {
     if (!confirm("Delete this service?")) return;
@@ -116,6 +128,10 @@ export function ServiceDetailPage() {
         branch: detailsForm.branch,
         subfolder: detailsForm.subfolder || undefined,
         serviceType: detailsForm.serviceType,
+        exposureProvider:
+          detailsForm.serviceType === "database" || detailsForm.serviceType === "redis"
+            ? undefined
+            : detailsForm.exposureProvider,
         networkAliases: detailsForm.networkAliases || undefined,
       });
       toast.success("Service details saved");
@@ -137,11 +153,38 @@ export function ServiceDetailPage() {
 
   if (!service) return <Card className="border-dashed"><CardContent className="py-14 text-center">Service not found.</CardContent></Card>;
 
+  const publicService = detailsForm.serviceType !== "database" && detailsForm.serviceType !== "redis";
+  const latestFailedDeployment = service.recentDeployments.find((deployment) => isErrorStatus(deployment.status)) ?? null;
+  const hasDiagnosableError = isErrorStatus(service.status) || latestFailedDeployment !== null;
+
+  const diagnoseIssue = async () => {
+    if (!latestFailedDeployment) return;
+    setDiagnosisLoading(true);
+    setDiagnosisError(null);
+    try {
+      const result = latestFailedDeployment.hasAiDiagnosis
+        ? await api.getAiDiagnosis(latestFailedDeployment.id)
+        : await api.generateAiDiagnosis(latestFailedDeployment.id);
+      setDiagnosis(result);
+      toast.success("Diagnosis ready");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not diagnose this deployment.";
+      setDiagnosisError(message);
+      toast.error(message);
+    } finally {
+      setDiagnosisLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
         title={service.name}
-        description={`${service.serviceType} - ${service.detectedStack || "stack not detected"}`}
+        description={`${service.serviceType} - ${service.detectedStack || "stack not detected"}${
+          service.serviceType === "database" || service.serviceType === "redis"
+            ? ""
+            : ` - ${service.exposureProvider === "cloudflare_quick" ? "Cloudflare quick" : "Traefik"}`
+        }`}
         eyebrow={
           <Link to={`/projects/${projectId}`} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-3.5 w-3.5" /> Back to project
@@ -215,7 +258,7 @@ export function ServiceDetailPage() {
           <div className="space-y-3">
             {service.recentDeployments.map((deployment) => (
               <Card key={deployment.id}>
-                <CardContent className="flex items-center justify-between gap-3 p-4">
+                <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm">v{deployment.version}</span>
@@ -243,71 +286,99 @@ export function ServiceDetailPage() {
                 {logs}
               </pre>
             )}
+            <ServiceDiagnostics
+              diagnosis={diagnosis}
+              diagnosisError={diagnosisError}
+              diagnosisLoading={diagnosisLoading}
+              hasDiagnosableError={hasDiagnosableError}
+              latestFailedDeployment={latestFailedDeployment}
+              onDiagnose={diagnoseIssue}
+            />
           </div>
         </TabsContent>
         <TabsContent value="details">
-          <Card>
-            <CardContent className="p-4">
-              <form onSubmit={saveDetails} className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="service-name">Service name</Label>
-                    <Input
-                      id="service-name"
-                      value={detailsForm.name}
-                      onChange={(event) => setDetailsForm((form) => ({ ...form, name: event.target.value }))}
-                      required
-                    />
+          <div className="space-y-4">
+            <Card>
+              <CardContent className="p-4">
+                <form onSubmit={saveDetails} className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="service-name">Service name</Label>
+                      <Input
+                        id="service-name"
+                        value={detailsForm.name}
+                        onChange={(event) => setDetailsForm((form) => ({ ...form, name: event.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="service-type">Service type</Label>
+                      <Input
+                        id="service-type"
+                        value={detailsForm.serviceType}
+                        onChange={(event) => setDetailsForm((form) => ({ ...form, serviceType: event.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="repo-url">Repository</Label>
+                      <Input
+                        id="repo-url"
+                        value={detailsForm.repoUrl}
+                        onChange={(event) => setDetailsForm((form) => ({ ...form, repoUrl: event.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="branch">Branch</Label>
+                      <Input
+                        id="branch"
+                        value={detailsForm.branch}
+                        onChange={(event) => setDetailsForm((form) => ({ ...form, branch: event.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="subfolder">Subfolder</Label>
+                      <Input
+                        id="subfolder"
+                        value={detailsForm.subfolder}
+                        onChange={(event) => setDetailsForm((form) => ({ ...form, subfolder: event.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="network-aliases">Network aliases</Label>
+                      <Input
+                        id="network-aliases"
+                        value={detailsForm.networkAliases}
+                        onChange={(event) => setDetailsForm((form) => ({ ...form, networkAliases: event.target.value }))}
+                      />
+                    </div>
+                    {publicService && (
+                      <div className="space-y-2">
+                        <Label htmlFor="service-exposure">Expose</Label>
+                        <Select
+                          value={detailsForm.exposureProvider}
+                          onValueChange={(value) => setDetailsForm((form) => ({ ...form, exposureProvider: value as ExposureProvider }))}
+                        >
+                          <SelectTrigger id="service-exposure">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="traefik">Traefik</SelectItem>
+                            <SelectItem value="cloudflare_quick">Cloudflare quick</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <Field label="Container" value={service.containerId || "-"} />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="service-type">Service type</Label>
-                    <Input
-                      id="service-type"
-                      value={detailsForm.serviceType}
-                      onChange={(event) => setDetailsForm((form) => ({ ...form, serviceType: event.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="repo-url">Repository</Label>
-                    <Input
-                      id="repo-url"
-                      value={detailsForm.repoUrl}
-                      onChange={(event) => setDetailsForm((form) => ({ ...form, repoUrl: event.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="branch">Branch</Label>
-                    <Input
-                      id="branch"
-                      value={detailsForm.branch}
-                      onChange={(event) => setDetailsForm((form) => ({ ...form, branch: event.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="subfolder">Subfolder</Label>
-                    <Input
-                      id="subfolder"
-                      value={detailsForm.subfolder}
-                      onChange={(event) => setDetailsForm((form) => ({ ...form, subfolder: event.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="network-aliases">Network aliases</Label>
-                    <Input
-                      id="network-aliases"
-                      value={detailsForm.networkAliases}
-                      onChange={(event) => setDetailsForm((form) => ({ ...form, networkAliases: event.target.value }))}
-                    />
-                  </div>
-                  <Field label="Container" value={service.containerId || "-"} />
-                </div>
-                <Button type="submit" disabled={savingDetails}>
-                  {savingDetails ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {savingDetails ? "Saving..." : "Save service"}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+                  <Button type="submit" disabled={savingDetails}>
+                    {savingDetails ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    {savingDetails ? "Saving..." : "Save service"}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+
+          </div>
         </TabsContent>
       </Tabs>
     </div>
@@ -321,4 +392,115 @@ function Field({ label, value }: { label: string; value: string }) {
       <p className="mt-1 truncate rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">{value}</p>
     </div>
   );
+}
+
+type ServiceDeploymentSummary = ServiceDetail["recentDeployments"][number];
+
+function ServiceDiagnostics({
+  diagnosis,
+  diagnosisError,
+  diagnosisLoading,
+  hasDiagnosableError,
+  latestFailedDeployment,
+  onDiagnose,
+}: {
+  diagnosis: AiDiagnosis | null;
+  diagnosisError: string | null;
+  diagnosisLoading: boolean;
+  hasDiagnosableError: boolean;
+  latestFailedDeployment: ServiceDeploymentSummary | null;
+  onDiagnose: () => void;
+}) {
+  if (!hasDiagnosableError) {
+    return null;
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              Service diagnostics
+            </CardTitle>
+            <CardDescription>
+              Diagnose the latest failed deployment from this service.
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            onClick={onDiagnose}
+            disabled={!latestFailedDeployment || diagnosisLoading}
+          >
+            {diagnosisLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <BrainCircuit className="h-4 w-4" />}
+            Diagnose issue
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!latestFailedDeployment && (
+          <p className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+            No failed deployment with diagnostic logs is available yet.
+          </p>
+        )}
+        {latestFailedDeployment && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Deployment</span>
+            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">
+              {latestFailedDeployment.id.slice(0, 8)}
+            </span>
+            <StatusBadge status={latestFailedDeployment.status} />
+          </div>
+        )}
+        {diagnosisError && (
+          <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            {diagnosisError}
+          </p>
+        )}
+        {diagnosis && (
+          <div className="space-y-4 rounded-md border bg-muted/20 p-4">
+            <div>
+              <p className="text-xs font-semibold uppercase text-muted-foreground">Root cause</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <span className="rounded bg-primary/10 px-2 py-0.5 text-primary">
+                  {diagnosis.diagnosis.rootCauseCategory}
+                </span>
+                <span className="rounded bg-muted px-2 py-0.5 text-muted-foreground">
+                  {diagnosis.diagnosis.confidence} confidence
+                </span>
+              </div>
+              <p className="mt-2 text-sm leading-6">{diagnosis.diagnosis.diagnosis}</p>
+            </div>
+            {diagnosis.diagnosis.evidence.length > 0 && (
+              <CompactList title="Relevant log lines" values={diagnosis.diagnosis.evidence} />
+            )}
+            {diagnosis.diagnosis.suggestedFixes.length > 0 && (
+              <CompactList title="Suggested fix" values={diagnosis.diagnosis.suggestedFixes} />
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CompactList({ title, values }: { title: string; values: string[] }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase text-muted-foreground">{title}</p>
+      <ul className="mt-2 space-y-2 text-sm leading-6">
+        {values.map((value) => (
+          <li key={value} className="rounded border bg-background px-3 py-2 text-muted-foreground">
+            {value}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function isErrorStatus(status: string) {
+  const value = status.toLowerCase();
+  return value.includes("failed") || value.includes("error") || value.includes("unhealthy");
 }

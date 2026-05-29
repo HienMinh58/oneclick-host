@@ -28,7 +28,10 @@ class ApiClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
-      throw new Error(error.message || `API Error: ${response.status}`);
+      const validationErrors = error.errors
+        ? Object.values(error.errors).flat().filter(Boolean).join(" ")
+        : "";
+      throw new Error(error.message || error.title || validationErrors || `API Error: ${response.status}`);
     }
 
     const text = await response.text();
@@ -79,6 +82,14 @@ class ApiClient {
 
   async getProject(id: string) {
     return this.request<ProjectDetail>(`/projects/${id}`);
+  }
+
+  async getDeploymentGraph(projectId: string) {
+    return this.request<DeploymentGraph>(`/projects/${projectId}/deployment-graph`);
+  }
+
+  async getComposeServices(projectId: string) {
+    return this.request<ComposeService[]>(`/projects/${projectId}/compose-services`);
   }
 
   async createService(projectId: string, data: CreateServiceRequest) {
@@ -189,6 +200,7 @@ export type ServiceSummary = {
   id: string;
   name: string;
   serviceType: string;
+  exposureProvider: ExposureProvider;
   detectedStack: string | null;
   status: string;
   liveUrl: string | null;
@@ -206,6 +218,7 @@ export type CreateServiceRequest = {
   branch?: string;
   subfolder?: string;
   serviceType?: string;
+  exposureProvider?: ExposureProvider;
   networkAliases?: string;
 };
 
@@ -219,6 +232,7 @@ export type ServiceResponse = {
   branch: string;
   subfolder: string | null;
   serviceType: string;
+  exposureProvider: ExposureProvider;
   detectedStack: string | null;
   networkAliases: string | null;
   status: string;
@@ -235,6 +249,7 @@ export type ServiceDetail = {
   branch: string;
   subfolder: string | null;
   serviceType: string;
+  exposureProvider: ExposureProvider;
   detectedStack: string | null;
   networkAliases: string | null;
   containerId: string | null;
@@ -271,9 +286,12 @@ export type ComposeRoute = {
   serviceName: string;
   routeSlug: string;
   internalPort: number;
+  exposureProvider?: "traefik" | "cloudflare_quick";
   healthPath?: string | null;
   liveUrl?: string | null;
 };
+
+export type ExposureProvider = "traefik" | "cloudflare_quick";
 
 export type ComposeEnvVar = {
   serviceName: string;
@@ -325,6 +343,22 @@ export type ComposeInspectResponse = {
   suggestedEnvironmentVariables: ComposeEnvVar[];
 };
 
+export type ComposeService = {
+  name: string;
+  type: DeploymentGraphNodeType;
+  image: string | null;
+  buildContext: string | null;
+  command: string | null;
+  ports: number[];
+  environmentKeys: string[];
+  dependencies: string[];
+  volumes: string[];
+  networks: string[];
+  routes: ComposeRoute[];
+  isPublic: boolean;
+  status: string;
+};
+
 export type ProjectDeployment = {
   id: string;
   projectId: string;
@@ -349,6 +383,44 @@ export type RouteTarget = {
   executionNodeName: string | null;
   updatedAt: string;
 };
+
+export type DeploymentGraph = {
+  nodes: DeploymentGraphNode[];
+  edges: DeploymentGraphEdge[];
+};
+
+export type DeploymentGraphNode = {
+  id: string;
+  type: DeploymentGraphNodeType;
+  label: string;
+  metadata: Record<string, string>;
+};
+
+export type DeploymentGraphEdge = {
+  id: string;
+  type: DeploymentGraphEdgeType;
+  source: string;
+  target: string;
+  label: string;
+  metadata: Record<string, string>;
+};
+
+export type DeploymentGraphNodeType =
+  | "service"
+  | "database"
+  | "cache"
+  | "worker"
+  | "reverse_proxy"
+  | "volume"
+  | "env_var"
+  | "network";
+
+export type DeploymentGraphEdgeType =
+  | "depends_on"
+  | "uses_env"
+  | "mounts"
+  | "exposes"
+  | "connects_to";
 
 export type AiDiagnosis = {
   id: string;
