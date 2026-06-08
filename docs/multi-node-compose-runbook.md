@@ -109,6 +109,12 @@ Firewall tối thiểu:
 - không mở PostgreSQL public;
 - port `5433` và `3000` chỉ bind loopback trong env generated.
 
+Trên AWS phase đầu tối ưu chi phí, control-plane cũng có thể đóng vai trò NAT
+instance nhẹ cho execution-node private-only. Cách này rẻ hơn NAT Gateway nhưng
+cần coi control-plane là thành phần hạ tầng quan trọng: bật `source_dest_check =
+false`, `net.ipv4.ip_forward=1`, và chỉ route private subnet qua control-plane.
+Stack Terraform mẫu nằm ở `infra/aws/phase1-multinode`.
+
 Phase đầu dùng:
 
 ```text

@@ -1,4 +1,4 @@
-.PHONY: validate pull-base-images generate-execution-secrets render-multinode-env smoke-compose-multinode fixture-config
+.PHONY: validate pull-base-images generate-execution-secrets render-multinode-env smoke-compose-multinode fixture-config terraform-phase1-validate
 
 validate:
 	dotnet build backend/OneClickHost.Api/OneClickHost.Api.csproj
@@ -7,6 +7,7 @@ validate:
 	cd frontend && npm run build
 	docker compose config -q
 	docker compose -f docker-compose.execution.yml config -q
+	docker compose -f docker-compose.control-plane.phase1.yml config -q
 
 pull-base-images:
 	docker pull mcr.microsoft.com/dotnet/sdk:10.0
@@ -28,3 +29,6 @@ render-multinode-env:
 
 smoke-compose-multinode:
 	./scripts/smoke-compose-multinode.sh
+
+terraform-phase1-validate:
+	cd infra/aws/phase1-multinode && terraform init -backend=false && terraform fmt -check && terraform validate
