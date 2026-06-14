@@ -178,6 +178,13 @@ https://github.com/tuankiet18-dev/oneclick-compose-fixture
 The same fixture contents are also kept locally under
 `fixtures/oneclick-compose-fixture` for review and manual push.
 
+For the lowest-cost AWS production pilot in Singapore, use
+`infra/aws/phase1-multinode`. It creates one public control-plane EC2 instance,
+one private-only execution-node EC2 instance, one Elastic IP, no NAT Gateway, no
+ALB, and no RDS. The control-plane acts as a small NAT instance so the private
+execution-node can clone public GitHub repos and pull images without a second
+public IPv4 address.
+
 ## 🛡️ CI/CD & Reliability
 
 Our internal pipeline ensures stability across all components:
